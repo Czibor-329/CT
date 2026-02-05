@@ -1167,7 +1167,7 @@ class Petri:
                 enter_new = self.time + self.ttime
                 expected_enter_s1 = enter_new + self.T_transport + self.T_load
                 release_s1 = expected_enter_s1 + place_s1.processing_time
-                transport_s1_to_s5 = self.ttime * 2
+                transport_s1_to_s5 = self.ttime * 2 + 15 # s5取出、运送、装载到LP_done 约15s
                 expected_enter_s5 = release_s1 + transport_s1_to_s5 + self.T_load
                 expected_leave_s5 = expected_enter_s5 + place_s5.processing_time
                 
@@ -1375,7 +1375,7 @@ class Petri:
                     release_s1 = expected_enter_s1 + place_s1.processing_time
                     
                     # 预估 s5 进入时间
-                    transport_s1_to_s5 = self.T_load * 2 + self.T_transport
+                    transport_s1_to_s5 = self.T_load * 2 + self.T_transport + 15 # +15s buffer for s5 clearing
                     expected_enter_s5 = release_s1 + transport_s1_to_s5
 
                     penalty_s5, corrected_enter_s5 = self._check_release_violation(s5_idx, expected_enter_s5)
