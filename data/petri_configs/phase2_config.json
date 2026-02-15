@@ -1,5 +1,4 @@
 {
-    "n_wafer": 6,
     "n_wafer_route1": 0,
     "n_wafer_route2": 6,
     "c_time": 8,
@@ -13,11 +12,10 @@
     "D_Residual_time": 15,
     "P_Residual_time": 20,
     "c_release_violation": 0.1,
-    "enable_release_penalty_detection": false,
+    "enable_release_penalty_detection": true,
     "enable_s5_availability_check": false,
     "T_transport": 5,
     "T_load": 5,
-    "T_pm1_to_pm2": 5,
     "idle_timeout": 700,
     "idle_penalty": 10,
     "stop_on_scrap": true,
@@ -32,13 +30,7 @@
         "penalty": 1,
         "warn_penalty": 1,
         "transport_penalty": 1,
-        "congestion_penalty": 1,
         "time_cost": 1,
         "release_violation_penalty": 1
-    },
-    "routes": null,
-    "start_place_names": null,
-    "end_place_name": "LP_done",
-    "no_residence_place_names": null,
-    "place_display_names": null
+    }
 }

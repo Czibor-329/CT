@@ -184,7 +184,9 @@ class Petri:
         print(config.format(detailed=True))
         
         # 将配置参数设置为实例属性（保持向后兼容）
-        self.n_wafer = config.n_wafer
+        self.n_wafer_route1 = getattr(config, 'n_wafer_route1', None)
+        self.n_wafer_route2 = getattr(config, 'n_wafer_route2', None)
+        self.n_wafer = self.n_wafer_route1 + self.n_wafer_route2
         self.c_time = config.c_time
         self.R_done = config.R_done
         self.R_finish = getattr(config, 'R_finish', 800)  # 全部完工大奖励
@@ -193,8 +195,6 @@ class Petri:
         self.a_warn = config.a_warn
         self.T_safe = config.T_safe
         self.b_safe = config.b_safe
-        self.MAX_WAIT_STEP = config.MAX_WAIT_STEP
-        self.c_congest = config.c_congest
         self.D_Residual_time = config.D_Residual_time
         self.P_Residual_time = config.P_Residual_time
         self.c_release_violation = config.c_release_violation
@@ -202,7 +202,6 @@ class Petri:
         self.enable_s5_availability_check = config.enable_s5_availability_check
         self.T_transport = config.T_transport
         self.T_load = config.T_load
-        self.T_pm1_to_pm2 = config.T_pm1_to_pm2
         self.idle_timeout = config.idle_timeout
         self.idle_penalty = config.idle_penalty
         self.stop_on_scrap = config.stop_on_scrap
@@ -236,12 +235,8 @@ class Petri:
         # 在 s1 处根据晶圆颜色分流：颜色1走 s2，颜色2走 s5
         # 双机械手协作：TM2 负责 LP1/LP2/s1/s2放入/s4取出/s5/LP_done，TM3 负责 s2取出/s3/s4放入
         
-        # 晶圆数量分配（可配置）
-        # 注意：config 中 n_wafer_route1/2 可能为 None，需要检查
-        _route1 = getattr(config, 'n_wafer_route1', None)
-        _route2 = getattr(config, 'n_wafer_route2', None)
-        self.n_wafer_route1 = _route1 if _route1 is not None else self.n_wafer // 2
-        self.n_wafer_route2 = _route2 if _route2 is not None else self.n_wafer - self.n_wafer // 2
+
+
         
         modules = {
             "LP1": ModuleSpec(tokens=self.n_wafer_route1, ptime=0, capacity=self.n_wafer_route1),  # 路线1晶圆

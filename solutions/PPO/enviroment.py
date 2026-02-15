@@ -410,7 +410,7 @@ class Env_PN_Concurrent(EnvBase):
         self.tm3_wait_action = len(self.tm3_transition_indices)
         
         self.detailed_reward = detailed_reward
-        self.n_wafer = config.n_wafer
+        self.n_wafer = self.net.n_wafer
         
         self._make_spec()
         if seed is None:
