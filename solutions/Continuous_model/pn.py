@@ -671,18 +671,13 @@ class Petri:
         place.pop_release(token_id)
 
     def _get_transition_robot(self, t_name: str) -> Optional[str]:
-        """
-        判断变迁是否使用机械手，并返回机械手名称。
-        """
-        # TM2 transitions
-        if t_name in ["u_LP1_s1", "u_LP2_s1", "u_s1_s2", "u_s1_s5", "u_s4_s5", "u_s5_LP_done"] or \
-           t_name in ["t_s1", "t_s2", "t_s5", "t_LP_done"]:
+        """判断变迁使用哪个机械手，返回 'TM2'/'TM3' 或 None。"""
+        if t_name in TM2_TRANSITIONS:
             return "TM2"
-        # TM3 transitions
-        elif t_name in ["u_s2_s3", "u_s3_s4"] or \
-             t_name in ["t_s3", "t_s4"]:
+        elif t_name in TM3_TRANSITIONS:
             return "TM3"
         return None
+
 
     def _get_robot_timeline(self, robot_name: str) -> List[Interval]:
         """
@@ -904,135 +899,6 @@ class Petri:
         # 最终进入 LP_done
         # t_LP_done 已在上面处理 exit_system
 
-    def calc_wafer_statistics(self) -> Dict[str, Any]:
-        """
-        计算晶圆滞留时间统计数据。
-        
-        Returns:
-            Dict 包含以下键：
-            - system_avg: 平均系统滞留时间（从进入到离开）
-            - system_max: 最大系统滞留时间
-            - completed_count: 已完成晶圆数
-            - in_progress_count: 进行中晶圆数
-            - chambers: {chamber_name: {"avg": float, "max": int, "count": int}}
-            - transports: {"avg": float, "max": int, "count": int}  # 所有运输位合并
-            - transports_detail: {transport_name: {"avg": float, "max": int, "count": int}}
-        """
-        result = {
-            "system_avg": 0.0,
-            "system_max": 0,
-            "system_diff": 0.0,
-            "completed_count": 0,
-            "in_progress_count": 0,
-            "chambers": {},
-            "transports": {"avg": 0.0, "max": 0, "count": 0},
-            "transports_detail": {},
-        }
-        
-        # 腔室名称映射到显示名称
-        chamber_display = {
-            "s1": "PM7/8",
-            "s2": "LLC",
-            "s3": "PM1/2/3/4",
-            "s4": "LLD",
-            "s5": "PM9/10",
-        }
-        
-        # 初始化腔室统计
-        for chamber in chamber_display.values():
-            result["chambers"][chamber] = {"avg": 0.0, "max": 0, "count": 0, "times": []}
-        
-        # 初始化运输位统计
-        transport_names = ["d_s1", "d_s2", "d_s3", "d_s4", "d_s5", "d_LP_done"]
-        for t_name in transport_names:
-            result["transports_detail"][t_name] = {"avg": 0.0, "max": 0, "count": 0, "times": []}
-        
-        system_times = []
-        all_transport_times = []
-        
-        for wafer_id, stats in self.wafer_stats.items():
-            # 系统滞留时间
-            enter = stats.get("enter_system")
-            exit_time = stats.get("exit_system")
-            
-            if enter is not None:
-                if exit_time is not None:
-                    # 已完成的晶圆
-                    system_time = exit_time - enter
-                    system_times.append(system_time)
-                    result["completed_count"] += 1
-                else:
-                    # 进行中的晶圆，使用当前时间计算
-                    #system_time = self.time - enter
-                    #system_times.append(system_time)
-                    result["in_progress_count"] += 1
-            
-            # 腔室滞留时间
-            for chamber_name, times in stats.get("chambers", {}).items():
-                display_name = chamber_display.get(chamber_name, chamber_name)
-                enter_t = times.get("enter")
-                exit_t = times.get("exit")
-                
-                if enter_t is not None:
-                    stay_time = 0
-                    if exit_t is not None:
-                        stay_time = exit_t - enter_t
-                    #else:
-                        # 还在腔室中
-                    #    stay_time = self.time - enter_t
-                    
-                    if display_name in result["chambers"] and stay_time > 0:
-                        result["chambers"][display_name]["times"].append(stay_time)
-            
-            # 运输位滞留时间
-            for transport_name, times in stats.get("transports", {}).items():
-                enter_t = times.get("enter")
-                exit_t = times.get("exit")
-
-                stay_time = 0
-                if enter_t is not None:
-                    if exit_t is not None:
-                        stay_time = exit_t - enter_t
-                    #else:
-                        # 还在运输中
-                    #    stay_time = self.time - enter_t
-                    
-                    if stay_time > 0:
-                        all_transport_times.append(stay_time)
-                        if transport_name in result["transports_detail"]:
-                            result["transports_detail"][transport_name]["times"].append(stay_time)
-        
-        # 计算系统统计
-        if system_times:
-            result["system_avg"] = sum(system_times) / len(system_times)
-            result["system_max"] = max(system_times)
-            result["system_diff"] = max(system_times) - min(system_times)
-        
-        # 计算腔室统计
-        for chamber_name, data in result["chambers"].items():
-            times = data["times"]
-            if times:
-                data["avg"] = sum(times) / len(times)
-                data["max"] = max(times)
-                data["count"] = len(times)
-            del data["times"]  # 清理临时数据
-        
-        # 计算运输位统计（合并）
-        if all_transport_times:
-            result["transports"]["avg"] = sum(all_transport_times) / len(all_transport_times)
-            result["transports"]["max"] = max(all_transport_times)
-            result["transports"]["count"] = len(all_transport_times)
-        
-        # 计算各运输位详细统计
-        for transport_name, data in result["transports_detail"].items():
-            times = data["times"]
-            if times:
-                data["avg"] = sum(times) / len(times)
-                data["max"] = max(times)
-                data["count"] = len(times)
-            del data["times"]  # 清理临时数据
-        
-        return result
 
     def _next_accept_time(self, place, t_now: int) -> float:
         """计算某个 place 在 t_now 时刻之后，最早什么时候能接收一个新 token。"""
@@ -1501,10 +1367,7 @@ class Petri:
                     # 实际进入 s5 的时间
                     expected_enter_s5 = earliest_tm2_free + transport_s1_to_s5
                                         
-                    # [s5对比] Log
-                    wait_time = earliest_tm2_free - release_s1
-                    #if wait_time > 0:
-                    #    print(f"[s5对比] Route2 Wafer {wafer_id}: s1->s5. Robot Wait={wait_time}. Est Enter={expected_enter_s5} (vs ideal {release_s1 + transport_s1_to_s5})")
+
 
                     penalty_s5, corrected_enter_s5 = self._check_release_violation(s5_idx, expected_enter_s5)
 
@@ -1694,11 +1557,7 @@ class Petri:
                     self._add_robot_estimate("TM2", wafer_id, t2, t2 + transport_s5_out,
                                              from_loc="s5", to_loc="LP_done")
                     
-                    # [s5对比] Log
-                    tm3_wait = earliest_tm3_free_s3_s4 - release_s3
-                    tm2_wait = earliest_tm2_free_s4_s5 - release_s4
-                    if tm3_wait > 0 or tm2_wait > 0:
-                        print(f"[s5对比] Route1 Wafer {wafer_id}: s2->s3->s4->s5. TM3 Wait={tm3_wait}, TM2 Wait={tm2_wait}. Est Enter s5={expected_enter_s5}")
+
 
                     self._release_violation_penalty += penalty
                 
@@ -1772,17 +1631,7 @@ class Petri:
                     s5_idx = self._get_place_index("s5")
                     self._pop_release(wafer_id, s5_idx)
                 
-                # 打印 s5 首次预估 vs 实际离开时间对比
-                est = self._s5_first_estimate.get(wafer_id)
-                actual_leave = start_time  # u_s5_LP_done 的 start_time 即晶圆离开 s5 的时刻
-                #if est is not None:
-                    #delta = actual_leave - est
-                    #route = wafer_route_type if wafer_route_type else '?'
-                    #print(f"[s5对比] wafer {wafer_id} (路线{route}) | "
-                    #      f"首次预估释放: {est} | 实际离开: {actual_leave} | "
-                    #      f"差值: {delta:+d}s")
-                #else:
-                    #print(f"[s5对比] wafer {wafer_id} | 实际离开: {start_time} | 无首次预估记录")
+
             
             elif t_name == "t_LP_done":
                 # 记录 s5 实际离开时间到 wafer_stats（已在 _track_wafer_statistics 中处理）
@@ -1831,30 +1680,9 @@ class Petri:
                     log_entry["from_chamber"] = from_chamber
                     log_entry["to_chamber"] = to_chamber
             
-            # 机械手动作：所有 u_ 和 t_ 开头的变迁都涉及机械手动作
-            # u_ 变迁：卸载变迁（从源库所取晶圆）
-            # t_ 变迁：装载变迁（将晶圆放入目标库所）
-            robot_map = {
-                # u_ 变迁（卸载）
-                "u_LP1_s1": "TM2",
-                "u_LP2_s1": "TM2",
-                "u_s1_s2": "TM2",
-                "u_s1_s5": "TM2",
-                "u_s2_s3": "TM3",
-                "u_s3_s4": "TM3",
-                "u_s4_s5": "TM2",
-                "u_s5_LP_done": "TM2",
-                # t_ 变迁（装载）
-                "t_s1": "TM2",
-                "t_s2": "TM2",
-                "t_s3": "TM3",
-                "t_s4": "TM3",
-                "t_s5": "TM2",
-                "t_LP_done": "TM2",
-            }
-            
+            # 机械手动作：使用模块级常量判断
             if t_name.startswith("u_") or t_name.startswith("t_"):
-                robot_name = robot_map.get(t_name, "TM2")  # 默认 TM2
+                robot_name = self._get_transition_robot(t_name) or "TM2"  # 默认 TM2
                 log_entry["robot_name"] = robot_name
                 
                 # 提取 from_loc 和 to_loc
@@ -2204,27 +2032,7 @@ class Petri:
                 for tok in place.tokens:
                     overtime = (self.time - tok.enter_time) - place.processing_time - self.P_Residual_time
                     if overtime > 0:
-                        self.resident_violation_count += 0.5 # 每步检测可能多次，但在step里是一次性的scrap判断
-                        # 注意：scrap_count 是由 external caller (step) 增加的，这里只增加分类计数
-                        # 但由于 _check_scrap 可能被多次调用（wait和fire后），计数需要小心。
-                        # 不过 pn.py 的设计是发现 scrap 就 done，所以计数只加一次没问题。
-                        # 修正：caller (step) 会增加 total scrap_count。这里我们可以增加分类计数。
-                        # 为了避免重复计数，这里暂不加？
-                        # 不，step 代码里是 if is_scrap: self.scrap_count += 1
-                        # 所以这里不需要加 self.scrap_count，但需要加 self.resident_violation_count
-                        # 等等，如果 _check_scrap 只是检测，那 counters 应该在 confirm scrap 时加。
-                        # 但这里我们必须在检测时就知道是哪种 breach。
-                        # step 函数只有 "is_scrap" bool。
-                        # 为防止副作用，我们只返回 info，由 step 或专门的方法增加计数？
-                        # 或者为了简单，并在 step 中只调用一次 stop_on_scrap，就在这里加？
-                        # 细看 step 代码：
-                        # is_scrap, scrap_info = self._check_scrap(return_info=True)
-                        # if is_scrap: ...
-                        # 所以这里是实时检测。
-                        # 既然 step 会终止 episode (或者记录)，那我们在 step 里增加计数比较好。
-                        # 但 step 里没分类型。
-                        # 所以在 return_info 里返回 type，step 里根据 info['type'] 增加计数？
-                        # 这样改动最小且安全。
+                        self.resident_violation_count += 0.5
                         
                         if return_info:
                             return True, {
