@@ -61,7 +61,6 @@ class PetriEnvConfig:
 
     # =========向后兼容=================
     enable_release_penalty_detection: bool = False #施放时间惩罚开关
-    enable_s5_availability_check: bool = False #类型2的晶圆启动是否受到强制限制
 
     #==========训练====================
     stop_on_scrap: bool = True #违反驻留时间约束是否截断

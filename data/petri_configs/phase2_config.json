@@ -13,7 +13,6 @@
     "P_Residual_time": 20,
     "c_release_violation": 0.1,
     "enable_release_penalty_detection": true,
-    "enable_s5_availability_check": false,
     "T_transport": 5,
     "T_load": 5,
     "idle_timeout": 700,

@@ -146,9 +146,6 @@ class Place:
 
 class Petri:
     def __init__(self, config: Optional[PetriEnvConfig] = None,
-                 stop_on_scrap: Optional[bool] = None,
-                 training_phase: Optional[int] = None,
-                 reward_config: Optional[Dict[str, int]] = None,
                  enable_statistics: bool = False) -> None:
         """
         初始化 Petri 网环境。
@@ -158,26 +155,14 @@ class Petri:
                   LP2 -> s1 -> s5 -> LP_done
         - 双机械手：TM2 负责 LP1/LP2/s1/s2/s4/s5/LP_done，TM3 负责 s2/s3/s4
         - color 路线分流：color=1 走路线1，color=2 走路线2
-        
-        Args:
-            config: PetriEnvConfig配置对象（推荐使用）
-            stop_on_scrap: 报废时是否停止（如果config为None时使用）
-            training_phase: 训练阶段（如果config为None时使用）
-            reward_config: 奖励配置（如果config为None时使用）
+
         """
         # -----------------------
         # 1) 加载或创建配置
         # -----------------------
         if config is None:
             # 使用默认配置或传入的参数
-            kwargs = {}
-            if stop_on_scrap is not None:
-                kwargs['stop_on_scrap'] = stop_on_scrap
-            if training_phase is not None:
-                kwargs['training_phase'] = training_phase
-            if reward_config is not None:
-                kwargs['reward_config'] = reward_config
-            config = PetriEnvConfig(**kwargs)
+            config = PetriEnvConfig()
         
         # 保存配置
         self.config = config
@@ -199,7 +184,6 @@ class Petri:
         self.P_Residual_time = config.P_Residual_time
         self.c_release_violation = config.c_release_violation
         self.enable_release_penalty_detection = config.enable_release_penalty_detection
-        self.enable_s5_availability_check = config.enable_s5_availability_check
         self.T_transport = config.T_transport
         self.T_load = config.T_load
         self.idle_timeout = config.idle_timeout
@@ -1126,41 +1110,6 @@ class Petri:
             if "u_LP2_s1" in self.id2t_name:
                 t_idx = self._get_transition_index("u_LP2_s1")
                 mask[t_idx] = False
-        
-            
-        # ========== 类型 2 晶圆进入限制 (基于 s5 可用性) ==========
-        # 如果类型 2 晶圆预计进入 s5 的时间早于 s5 的可用时间，则禁止进入
-        if self.enable_s5_availability_check and "u_LP2_s1" in self.id2t_name and "s5" in self.id2p_name:
-            t_idx = self._get_transition_index("u_LP2_s1")
-            
-            # 只有当该动作尚未被禁用时才检查
-            if mask[t_idx]:
-                s5_idx = self._get_place_index("s5")
-                place_s5 = self.marks[s5_idx]
-                place_s1 = self.marks[self._get_place_index("s1")] # 获取 s1 以读取加工时间
-                
-                # s5 满载检查改进：检查预期时间段内是否有可用 Capacity (支持插队)
-                enter_new = self.time + self.ttime
-                expected_enter_s1 = enter_new + self.T_transport + self.T_load
-                release_s1 = expected_enter_s1 + place_s1.processing_time
-                transport_s1_to_s5 = self.ttime * 2
-                expected_enter_s5 = release_s1 + transport_s1_to_s5 + self.T_load
-                expected_leave_s5 = expected_enter_s5 + place_s5.processing_time
-                
-                # 统计在 [expected_enter_s5, expected_leave_s5] 期间的重叠预约数
-                overlap_count = 0
-                for _, release_time in place_s5.release_schedule:
-                    # 现有预约的占用区间: [release_time - processing_time, release_time]
-                    existing_start = release_time - place_s5.processing_time
-                    existing_end = release_time
-                    
-                    # 检查区间重叠: max(start1, start2) < min(end1, end2)
-                    if max(expected_enter_s5, existing_start) < min(expected_leave_s5, existing_end):
-                        overlap_count += 1
-                
-                # 如果重叠数达到容量上限，则禁止进入
-                if overlap_count >= place_s5.capacity:
-                     mask[t_idx] = False
 
         # ========== 步骤索引感知的路由约束 (u_变迁) ==========
         # 使用 (route_type, step) 决定晶圆下一个目标
@@ -2283,38 +2232,6 @@ class Petri:
         if with_reward:
             return finish, reward_result, False
         return finish, False
-
-    def _check_robot_conflict(self, a1: Optional[int], a2: Optional[int]) -> bool:
-        """
-        检查两个动作是否产生资源冲突（访问同一非资源库所）。
-        
-        Args:
-            a1: TM2 的变迁索引，None 表示等待
-            a2: TM3 的变迁索引，None 表示等待
-            
-        Returns:
-            True 表示无冲突，False 表示有冲突
-        """
-        if a1 is None or a2 is None:
-            return True  # 有一个等待，不冲突
-        
-        # 获取两个变迁的前置和后置库所
-        pre1 = set(np.flatnonzero(self.pre[:, a1] > 0))
-        pst1 = set(np.flatnonzero(self.pst[:, a1] > 0))
-        pre2 = set(np.flatnonzero(self.pre[:, a2] > 0))
-        pst2 = set(np.flatnonzero(self.pst[:, a2] > 0))
-        
-        # 获取资源库所索引（r_TM2, r_TM3）
-        resource_indices = set()
-        for i, name in enumerate(self.id2p_name):
-            if name.startswith("r_"):
-                resource_indices.add(i)
-        
-        # 检查是否有重叠（排除资源库所）
-        affected1 = (pre1 | pst1) - resource_indices
-        affected2 = (pre2 | pst2) - resource_indices
-        
-        return len(affected1 & affected2) == 0
 
     def step_concurrent(self, a1: Optional[int] = None, a2: Optional[int] = None,
                         wait1: bool = False, wait2: bool = False,
