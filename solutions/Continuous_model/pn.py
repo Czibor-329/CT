@@ -1031,20 +1031,6 @@ class Petri:
         # 最终进入 LP_done
         # t_LP_done 已在上面处理 exit_system
 
-
-    def _next_accept_time(self, place, t_now: int) -> float:
-        """计算某个 place 在 t_now 时刻之后，最早什么时候能接收一个新 token。"""
-        cap = max(1, place.capacity)
-        n = len(place.tokens)
-
-        # 有空位：立刻可接收
-        if n < cap:
-            return float(t_now)
-
-        # 已满：等最早完成的那个释放
-        finishes = [tok.enter_time + place.processing_time for tok in place.tokens]
-        return float(min(finishes))
-
     def reset(self):
         self.time = 0
         self.m = self.m0.copy()
@@ -1203,25 +1189,6 @@ class Petri:
             }
         
         return total
-
-    
-
-
-
-
-    # ---------- 计算最早可使能时间 ----------
-    def _earliest_enable_time(self, t):
-        pre_places = np.flatnonzero(self.pre[:, t] > 0)
-        earliest = 0
-        for p in pre_places:
-            tok_enter = int(self.marks[p].head().enter_time)  # 队头
-            tok_enter += int(self.ptime[p])
-            earliest = max(earliest, tok_enter)
-        
-        return int(earliest)
-
-
-
 
     def _fire(self, t: Union[int, List[int]]):
         start_time = self.time
@@ -1958,12 +1925,6 @@ class Petri:
             traceback.print_exc()
             raise
 
-
-    def get_enable_t(self) -> List[int]:
-        """返回所有可使能的变迁索引列表（兼容接口）。"""
-        tm2, tm3 = self._tm.get_enable_t()
-        return sorted(tm2 + tm3)
-
     def get_enable_t_by_robot(self) -> Tuple[List[int], List[int]]:
         """返回两个机械手各自可用的变迁列表。"""
         return self._tm.get_enable_t()
@@ -2027,16 +1988,9 @@ class Petri:
             return False, None
         return False
 
-    def _check_idle_timeout(self) -> bool:
-        """
-        检查是否连续执行 WAIT 动作超过阈值时间（停滞检测）
-        
-        Returns:
-            True 如果连续 WAIT 时间超过 idle_timeout
-        """
-        return self._consecutive_wait_time >= self.idle_timeout
-
-    def step(self, t: Optional[Union[int, List[int]]] = None, wait: bool = False, with_reward: bool = False, 
+    def step(self, t: Optional[Union[int, List[int]]] = None,
+             wait: bool = False,
+             with_reward: bool = False,
              detailed_reward: bool = False):
         """
         执行一步动作。
@@ -2126,7 +2080,7 @@ class Petri:
                     pass
             
             # 检查停滞（连续执行 WAIT 超过阈值时间）
-            if self._check_idle_timeout() and not self._idle_penalty_applied:
+            if (self._consecutive_wait_time >= self.idle_timeout) and not self._idle_penalty_applied:
                 self._idle_penalty_applied = True  # 只惩罚一次
                 if with_reward:
                     if detailed_reward:
