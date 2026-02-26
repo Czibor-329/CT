@@ -102,7 +102,7 @@ flowchart TB
 
 ---
 
-## 4. 训练系统 (`solutions/PPO/train_concurrent.py`)
+## 4. 训练系统 (`solutions/Continuous_model/train_concurrent.py`)
 
 使用 `torchrl` 实现 PPO 训练循环。
 

@@ -163,7 +163,7 @@ def load_concurrent_model(model_path: str, adapter: PetriAdapter):
     from torchrl.modules import MaskedCategorical
     from torchrl.envs.utils import ExplorationType, set_exploration_type
     from solutions.PPO.network.models import DualHeadPolicyNet
-    from solutions.PPO.train_concurrent import DualActionPolicyModule
+    from solutions.Continuous_model.train_concurrent import DualActionPolicyModule
     from solutions.Continuous_model.pn import TM2_TRANSITIONS, TM3_TRANSITIONS
     
     try:
