@@ -417,11 +417,11 @@ class Petri:
                 "u_LP1_s1": ["s1", "s2"],
                 "u_s1_s2": ["s2"],
                 "u_s2_s3": ["s3", "s4"],
-                "u_s3_s4": ["s4"],
+                #"u_s3_s4": ["s4"],
                 "u_s4_s5": ["s5"],
                 # 路线2
                 "u_LP2_s1": ["s1", "s5"],
-                "u_s1_s5": ["s5"],
+                #"u_s1_s5": ["s5"],
             }
             return chain_map.get(t_name, [])
         
