@@ -34,7 +34,7 @@ class RobotWidget(QWidget):
 
         painter.setPen(QPen(self.theme.qcolor(self.theme.border)))
         painter.setBrush(QBrush(self.theme.qcolor(self.theme.bg_surface)))
-        painter.drawRoundedRect(rect, 6, 6)
+        painter.drawRect(rect)
 
         status_color = self.theme.success if self.robot.busy else self.theme.text_muted
         led_rect = QRectF(rect.left() + 6, rect.top() + 6, 10, 10)

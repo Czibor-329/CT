@@ -392,18 +392,18 @@ class StatsPanel(QWidget):
         }}
         #MainProgressBar {{
             border: 1px solid rgb{t.border_muted};
-            border-radius: 4px;
+            border-radius: 0px;
             background-color: rgb{t.bg_deep};
         }}
         #MainProgressBar::chunk {{
             background-color: rgb{t.accent_cyan};
-            border-radius: 3px;
+            border-radius: 0px;
         }}
         
         #MetricRow, #RewardsContainer, #ReleaseContainer, #HistoryContainer {{
             background-color: rgb{t.bg_deep};
             border: 1px solid rgb{t.border_muted};
-            border-radius: 4px;
+            border-radius: 0px;
         }}
         #MetricKey {{
             font-size: {p.summary_key_font_pt}pt;
@@ -557,12 +557,12 @@ class StatsPanel(QWidget):
         self.progress_bar.setStyleSheet(f"""
             #MainProgressBar {{
                 border: 1px solid rgb{self.theme.border_muted};
-                border-radius: 4px;
+                border-radius: 0px;
                 background-color: rgb{self.theme.bg_deep};
             }}
             #MainProgressBar::chunk {{
                 background-color: rgb{color};
-                border-radius: 3px;
+                border-radius: 0px;
             }}
         """)
         

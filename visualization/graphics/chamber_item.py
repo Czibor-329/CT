@@ -76,18 +76,18 @@ class ChamberItem(QGraphicsItem):
         shadow_color = QColor(0, 0, 0, 40)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(shadow_color))
-        painter.drawRoundedRect(shadow_rect, p.corner_radius + 1, p.corner_radius + 1)
+        painter.drawRect(shadow_rect)
 
         # 2. 绘制背景
         painter.setBrush(QBrush(self.theme.qcolor(bg)))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(rect, p.corner_radius, p.corner_radius)
+        painter.drawRect(rect)
 
         # 3. 绘制边框
         pen_width = 2.0
         painter.setPen(QPen(self.theme.qcolor(border), pen_width))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(rect, p.corner_radius, p.corner_radius)
+        painter.drawRect(rect)
 
         # 4. 绘制网格（更淡）
         grid_color = QColor(*self.theme.border_muted)

@@ -157,7 +157,7 @@ class ControlPanel(QWidget):
             background-color: rgb{t.bg_surface};
             color: rgb{t.text_primary};
             border: 1px solid rgb{t.border};
-            border-radius: 5px;
+            border-radius: 0px;
             padding: {p.button_padding_v}px {p.button_padding_h}px;
             font-size: {p.button_font_size_px}px;
             min-height: {p.button_min_height}px;

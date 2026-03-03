@@ -17,13 +17,14 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import (
-    QLinearGradient, QPalette, QBrush, QIcon, QMouseEvent, 
+    QAction, QActionGroup, QLinearGradient, QPalette, QBrush, QIcon, QMouseEvent,
     QPainter, QColor, QPainterPath, QRegion
 )
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QApplication,
-    QGraphicsDropShadowEffect, QPushButton, QLineEdit, QTextEdit,
-    QScrollBar, QListWidget, QComboBox, QSpinBox, QSlider, QMessageBox
+    QPushButton, QLineEdit, QTextEdit,
+    QScrollBar, QListWidget, QComboBox, QSpinBox, QSlider, QMessageBox,
+    QFileDialog, QLabel, QDialog, QDialogButtonBox, QFormLayout
 )
 
 from .theme import ColorTheme
@@ -35,7 +36,7 @@ from .widgets.control_panel import ControlPanel
 
 
 class RoundedContainer(QWidget):
-    """圆角容器，用于绘制圆角背景"""
+    """主内容容器，用于绘制背景"""
     
     def __init__(self, theme: ColorTheme, parent=None):
         super().__init__(parent)
@@ -47,9 +48,9 @@ class RoundedContainer(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 绘制圆角背景
+        # 绘制直角背景
         path = QPainterPath()
-        path.addRoundedRect(self.rect(), self.radius, self.radius)
+        path.addRect(self.rect())
         
         # 使用渐变背景
         grad = QLinearGradient(0, 0, 0, self.height())
@@ -68,7 +69,7 @@ class PetriMainWindow(QMainWindow):
 
     # 不可拖动的控件类型
     NON_DRAGGABLE_WIDGETS = (
-        QPushButton, QLineEdit, QTextEdit, QScrollBar, 
+        QPushButton, QLineEdit, QTextEdit, QScrollBar,
         QListWidget, QComboBox, QSpinBox, QSlider
     )
 
@@ -86,45 +87,24 @@ class PetriMainWindow(QMainWindow):
         
         # Auto Mode State Tracking ('A' or 'B' or None)
         self._current_auto_mode = None
+        self._device_mode = "cascade"
+        self._wafer_count_route1: int | None = None
+        self._wafer_count_route2: int | None = None
+        self._model_path_override: Path | None = None
+        self._action_sequence_path = Path("solutions/Td_petri/planB_sequence.json")
         
         self._drag_pos: QPoint | None = None
         p = ui_params.main_window
 
         self.setWindowTitle("晶圆加工控制台")
         
-        # 无边框 + 透明背景（为阴影留空）
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        
-        # 窗口大小（包含阴影边距）
-        margin = p.shadow_margin
-        self.setGeometry(
-            p.initial_x - margin, 
-            p.initial_y - margin, 
-            p.initial_width + margin * 2, 
-            p.initial_height + margin * 2
-        )
+        # 使用系统窗口边框，保留系统最小化/最大化/关闭按钮
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setGeometry(p.initial_x, p.initial_y, p.initial_width, p.initial_height)
 
-        # 外层容器（用于阴影）
-        outer_widget = QWidget()
-        outer_widget.setStyleSheet("background: transparent;")
-        outer_layout = QVBoxLayout(outer_widget)
-        outer_layout.setContentsMargins(margin, margin, margin, margin)
-        outer_layout.setSpacing(0)
-        
-        # 圆角内容容器
+        # 内容容器
         self.content_container = RoundedContainer(self.theme)
-        
-        # 添加阴影效果
-        shadow = QGraphicsDropShadowEffect(self.content_container)
-        shadow.setBlurRadius(p.shadow_blur_radius)
-        shadow.setOffset(p.shadow_offset, p.shadow_offset)
-        shadow.setColor(QColor(0, 0, 0, 120))
-        self.content_container.setGraphicsEffect(shadow)
-        
-        outer_layout.addWidget(self.content_container)
-        
-        # 内容布局
         content_layout = QHBoxLayout(self.content_container)
         content_layout.setSpacing(p.central_spacing)
         content_layout.setContentsMargins(12, 12, 12, 12)
@@ -140,10 +120,12 @@ class PetriMainWindow(QMainWindow):
         self.right_panel.setFixedWidth(p.right_panel_width)
         content_layout.addWidget(self.right_panel)
 
-        self.setCentralWidget(outer_widget)
+        self.setCentralWidget(self.content_container)
+        self._create_menu_bar()
 
         self._connect_signals()
         self._apply_stylesheet()
+        self._refresh_status_message()
         
         # 初始化时禁用模型按钮
         self._update_model_buttons_state()
@@ -179,6 +161,120 @@ class PetriMainWindow(QMainWindow):
         has_model = self._model_handler is not None or self._concurrent_model_handler is not None
         self.right_panel.set_model_enabled(has_model)
 
+    def _create_menu_bar(self) -> None:
+        """创建菜单栏：设备/配置/回放。"""
+        menu_bar = self.menuBar()
+        menu_bar.setNativeMenuBar(False)
+
+        # 设备菜单（仅 UI 占位）
+        device_menu = menu_bar.addMenu("设备")
+        device_group = QActionGroup(self)
+        device_group.setExclusive(True)
+        self._action_device_cascade = QAction("级联设备", self, checkable=True)
+        self._action_device_single = QAction("单设备", self, checkable=True)
+        self._action_device_cascade.setChecked(True)
+        device_group.addAction(self._action_device_cascade)
+        device_group.addAction(self._action_device_single)
+        device_menu.addAction(self._action_device_cascade)
+        device_menu.addAction(self._action_device_single)
+        self._action_device_cascade.triggered.connect(lambda: self._set_device_mode("cascade"))
+        self._action_device_single.triggered.connect(lambda: self._set_device_mode("single"))
+
+        # 配置菜单
+        config_menu = menu_bar.addMenu("配置")
+        self._action_config_wafer = QAction("设置晶圆数量", self)
+        config_menu.addAction(self._action_config_wafer)
+        self._action_config_wafer.triggered.connect(self._set_wafer_count)
+
+        # 回放菜单（动作序列 JSON）
+        replay_menu = menu_bar.addMenu("回放")
+        self._action_pick_model = QAction("选择模型文件", self)
+        self._action_clear_model = QAction("清除模型文件选择", self)
+        self._action_pick_sequence = QAction("选择动作序列 JSON", self)
+        self._action_reset_sequence = QAction("恢复默认序列路径", self)
+        replay_menu.addAction(self._action_pick_model)
+        replay_menu.addAction(self._action_clear_model)
+        replay_menu.addSeparator()
+        replay_menu.addAction(self._action_pick_sequence)
+        replay_menu.addAction(self._action_reset_sequence)
+        self._action_pick_model.triggered.connect(self._pick_model_file)
+        self._action_clear_model.triggered.connect(self._clear_model_file)
+        self._action_pick_sequence.triggered.connect(self._pick_action_sequence_json)
+        self._action_reset_sequence.triggered.connect(self._reset_default_action_sequence)
+
+    def _pick_model_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择模型文件",
+            str(Path.cwd()),
+            "Model Files (*.pt *.pth);;All Files (*)",
+        )
+        if not path:
+            return
+        self._model_path_override = Path(path)
+        self._refresh_status_message()
+
+    def _clear_model_file(self) -> None:
+        self._model_path_override = None
+        self._refresh_status_message()
+
+    def _set_device_mode(self, mode: str) -> None:
+        if mode not in {"cascade", "single"}:
+            return
+        self._device_mode = mode
+        self.center_canvas.set_device_mode(mode)
+        self._refresh_status_message()
+
+    def _set_wafer_count(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("晶圆数量")
+        form = QFormLayout(dialog)
+        form.addRow(QLabel("设置两种晶圆数量（当前仅 UI 占位）"))
+
+        route1_spin = QSpinBox(dialog)
+        route1_spin.setRange(0, 2000)
+        route1_spin.setValue(self._wafer_count_route1 if self._wafer_count_route1 is not None else 8)
+        route2_spin = QSpinBox(dialog)
+        route2_spin.setRange(0, 2000)
+        route2_spin.setValue(self._wafer_count_route2 if self._wafer_count_route2 is not None else 10)
+
+        form.addRow("路线1晶圆数量", route1_spin)
+        form.addRow("路线2晶圆数量", route2_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=dialog)
+        form.addRow(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._wafer_count_route1 = int(route1_spin.value())
+        self._wafer_count_route2 = int(route2_spin.value())
+        self._refresh_status_message()
+
+    def _pick_action_sequence_json(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "选择动作序列 JSON", str(self._action_sequence_path.parent), "JSON Files (*.json)")
+        if not path:
+            return
+        self._action_sequence_path = Path(path)
+        self._refresh_status_message()
+
+    def _reset_default_action_sequence(self) -> None:
+        self._action_sequence_path = Path("solutions/Td_petri/planB_sequence.json")
+        self._refresh_status_message()
+
+    def _refresh_status_message(self) -> None:
+        mode_text = "级联设备" if self._device_mode == "cascade" else "单设备"
+        if self._wafer_count_route1 is None or self._wafer_count_route2 is None:
+            wafers_text = "未设置"
+        else:
+            wafers_text = f"R1={self._wafer_count_route1}, R2={self._wafer_count_route2}"
+        model_text = str(self._model_path_override) if self._model_path_override else "未选择"
+        seq_text = str(self._action_sequence_path)
+        self.statusBar().showMessage(
+            f"设备: {mode_text}（仅UI占位） | 晶圆数量: {wafers_text}（仅UI占位） | 模型: {model_text}（仅UI占位） | 动作序列: {seq_text}"
+        )
+
     def _connect_signals(self) -> None:
         self.viewmodel.state_updated.connect(self._on_state_updated)
         self.viewmodel.reward_updated.connect(self.left_panel.update_reward)
@@ -200,6 +296,11 @@ class PetriMainWindow(QMainWindow):
         self.right_panel.gantt_clicked.connect(self._on_gantt_clicked)
 
     def _on_state_updated(self, state) -> None:
+        if (self._wafer_count_route1 is None or self._wafer_count_route2 is None) and state.total_wafers > 0:
+            total = int(state.total_wafers)
+            self._wafer_count_route1 = total // 2
+            self._wafer_count_route2 = total - self._wafer_count_route1
+            self._refresh_status_message()
         self.center_canvas.update_state(state)
         self.left_panel.update_state(state, self.viewmodel.action_history, self.viewmodel.trend_data)
         self.right_panel.update_actions(state.enabled_actions)
@@ -268,12 +369,43 @@ class PetriMainWindow(QMainWindow):
             color: rgb{t.text_primary};
         }}
 
+        QMenuBar {{
+            background-color: rgb{t.bg_surface};
+            border: 1px solid rgb{t.border_muted};
+            font-size: 16px;
+            font-weight: 600;
+            min-height: 32px;
+            padding: 2px 8px;
+        }}
+        QMenuBar::item {{
+            background-color: rgb{t.bg_surface};
+            padding: 6px 14px;
+            margin-right: 4px;
+        }}
+        QMenuBar::item:selected {{
+            background-color: rgb{t.bg_elevated};
+        }}
+        QMenu {{
+            background-color: rgb{t.bg_surface};
+            border: 1px solid rgb{t.border};
+            font-size: 14px;
+            font-weight: 500;
+            padding: 4px;
+        }}
+        QMenu::item {{
+            padding: 6px 24px 6px 12px;
+        }}
+        QMenu::item:selected {{
+            background-color: rgb{t.bg_elevated};
+            color: rgb{t.accent_cyan};
+        }}
+
         /* -------- Buttons -------- */
         QPushButton {{
             background-color: rgb{t.bg_surface};
             color: rgb{t.text_primary};
             border: 1px solid rgb{t.border};
-            border-radius: 6px;
+            border-radius: 0px;
             padding: {cp.button_padding_v}px {cp.button_padding_h}px;
             font-size: {cp.button_font_size_px}px;
             min-height: {cp.button_min_height}px;
@@ -297,7 +429,7 @@ class PetriMainWindow(QMainWindow):
         QTextEdit {{
             background-color: rgb{t.bg_deep};
             border: 1px solid rgb{t.border};
-            border-radius: 4px;
+            border-radius: 0px;
             color: rgb{t.text_secondary};
             font-family: "{sp.font_family}";
             font-size: {sp.release_font_pt}pt;
@@ -308,7 +440,7 @@ class PetriMainWindow(QMainWindow):
         /* -------- ProgressBar -------- */
         QProgressBar {{
             border: 1px solid rgb{t.border_muted};
-            border-radius: 4px;
+            border-radius: 0px;
             text-align: center;
             background-color: rgb{t.bg_deep};
             font-size: {sp.label_font_pt}pt;
@@ -317,18 +449,18 @@ class PetriMainWindow(QMainWindow):
         }}
         QProgressBar::chunk {{
             background-color: rgb{t.accent_cyan};
-            border-radius: 3px;
+            border-radius: 0px;
         }}
         
         /* -------- ScrollBar -------- */
         QScrollBar:vertical {{
             background-color: rgb{t.bg_deep};
             width: 10px;
-            border-radius: 5px;
+            border-radius: 0px;
         }}
         QScrollBar::handle:vertical {{
             background-color: rgb{t.bg_elevated};
-            border-radius: 5px;
+            border-radius: 0px;
             min-height: 20px;
         }}
         QScrollBar::handle:vertical:hover {{
@@ -420,7 +552,7 @@ class PetriMainWindow(QMainWindow):
             return True
         
         try:
-            seq_path = Path("solutions/Td_petri/planB_sequence.json")
+            seq_path = self._action_sequence_path
             if not seq_path.exists():
                     QMessageBox.warning(self, "Error", f"{seq_path} not found! Run generation script first.")
                     return False

@@ -70,7 +70,7 @@ class StatusBadge(QLabel):
                 color: rgb{self.text_color};
                 background-color: rgb{self.bg_color};
                 border: 1px solid rgb{self.theme.border_muted};
-                border-radius: 10px;
+                border-radius: 0px;
                 padding: 3px 10px;
             }}
         """)
@@ -122,7 +122,7 @@ class StatusDot(QLabel):
         self.setStyleSheet(f"""
             QLabel {{
                 background-color: rgb{color};
-                border-radius: {self.dot_size // 2}px;
+                border-radius: 0px;
             }}
         """)
         

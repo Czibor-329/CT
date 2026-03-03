@@ -63,13 +63,13 @@ class ChamberWidget(QWidget):
         shadow_color = QColor(0, 0, 0, 60)  # 半透明黑色
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(shadow_color))
-        painter.drawRoundedRect(shadow_rect, p.corner_radius + 2, p.corner_radius + 2)
+        painter.drawRect(shadow_rect)
         
         # 2. 绘制主背景（更亮的背景色）
         bg_color = self.theme.qcolor(self.theme.bg_elevated)  # 使用更亮的背景
         painter.setBrush(QBrush(bg_color))
         painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(rect, p.corner_radius, p.corner_radius)
+        painter.drawRect(rect)
         
         # 4. 绘制网格（更明显的网格线）
         grid_color = QColor(*self.theme.border_muted)
@@ -91,7 +91,7 @@ class ChamberWidget(QWidget):
         border_pen.setWidth(2)  # 加粗边框
         painter.setPen(border_pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(rect, p.corner_radius, p.corner_radius)
+        painter.drawRect(rect)
         
         
 
@@ -156,7 +156,7 @@ class ChamberWidget(QWidget):
 
         # 两行文字分区：严格上/下 50%（再加少量 padding，防挤/防漂）
         pad_y = max(2, int(r * 0.08))
-        #top_rect = QRectF(wafer_rect.left(), wafer_rect.top() + pad_y, wafer_rect.width(), wafer_rect.height() * 0.50 - pad_y)
+        top_rect = QRectF(wafer_rect.left(), wafer_rect.top() + pad_y, wafer_rect.width(), wafer_rect.height() * 0.50 - pad_y)
         bot_rect = QRectF(wafer_rect.left(), wafer_rect.center().y(), wafer_rect.width(), wafer_rect.height() * 0.50 - pad_y)
 
         # ✅ 文本颜色：按晶圆颜色自动取高对比色

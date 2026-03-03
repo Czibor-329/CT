@@ -71,7 +71,7 @@ class RobotItem(QGraphicsItem):
         pen_width = 2 if flash else 1.5
         painter.setPen(QPen(self.theme.qcolor(border), pen_width))
         painter.setBrush(QBrush(self.theme.qcolor(bg)))
-        painter.drawRoundedRect(rect, p.corner_radius, p.corner_radius)
+        painter.drawRect(rect)
 
         # 网格更淡
         grid_color = QColor(*self.theme.border_muted)

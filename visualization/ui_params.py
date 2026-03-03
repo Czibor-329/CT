@@ -24,7 +24,7 @@ class MainWindowParams:
     central_spacing: int = 12        # 左/中/右三栏之间的间距 (px)
     
     # ───────── 无边框窗口参数 ─────────
-    window_corner_radius: int = 20   # 窗口圆角半径 (px)
+    window_corner_radius: int = 0    # 窗口圆角半径 (px)
     shadow_blur_radius: int = 20     # 阴影模糊半径 (px)
     shadow_offset: int = 5           # 阴影偏移 (px)
     shadow_margin: int = 40          # 窗口边距（为阴影留空）(px)
@@ -43,7 +43,7 @@ class StatsPanelParams:
     
     # ───────── KPI 卡片参数 ─────────
     kpi_card_padding: int = 10       # KPI 卡片内边距
-    kpi_card_radius: int = 6         # KPI 卡片圆角
+    kpi_card_radius: int = 0         # KPI 卡片圆角
     kpi_card_height: int = 60        # KPI 卡片固定高度
     kpi_card_spacing: int = 8        # KPI 卡片之间间距
     kpi_grid_columns: int = 2        # KPI 网格列数
@@ -135,7 +135,7 @@ class ChamberItemParams:
     w: int = 135              # 卡片宽度 (px)
     h: int = 135              # 卡片高度 (px)
     flash_ms: int = 450       # 状态变化时边框高亮持续时间 (ms)
-    corner_radius: int = 12    # 圆角半径 (px)
+    corner_radius: int = 0     # 圆角半径 (px)
     grid_step: int = 15       # 背景网格线间距 (px)
     led_size: int = 10        # 状态灯圆点直径 (px)
     font_family: str = "Consolas"
@@ -160,7 +160,7 @@ class RobotItemParams:
     w: int = 140              # 与腔室一致 (px)
     h: int = 140              # 与腔室一致 (px)
     flash_ms: int = 450       # IDLE↔BUSY 变化时边框高亮持续时间 (ms)
-    corner_radius: int = 10    # 圆角半径 (px)
+    corner_radius: int = 0     # 圆角半径 (px)
     grid_step: int = 15       # 背景网格线间距 (px)
     led_size: int = 10        # 状态灯圆点直径 (px)
     font_family: str = "Consolas"

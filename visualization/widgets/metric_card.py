@@ -121,6 +121,6 @@ class MetricCard(QWidget):
         
         painter.setBrush(gradient)
         painter.setPen(QPen(QColor(*self.theme.border), 1))
-        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 8, 8)
+        painter.drawRect(rect.adjusted(1, 1, -1, -1))
         
         super().paintEvent(event)
