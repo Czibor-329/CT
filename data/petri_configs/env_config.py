@@ -55,7 +55,7 @@ class PetriEnvConfig:
     T_transport: int = 5
     T_load: int = 5
     T_pm1_to_pm2: int = 5
-    idle_timeout: int = 300
+    idle_timeout: int = 300  # 仅默认值；pn.py 实际使用 最大腔室处理时间+30
     idle_penalty: int = 10
     stop_on_scrap: bool = True
     training_phase: int = 2

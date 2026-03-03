@@ -65,7 +65,7 @@ flowchart TB
 | **Place (库所)** | 代表资源容器：加工腔室 (`s1`-`s5`)、缓冲区 (`s2`, `s4`)、机械手 (`r_TM2`)、输入/输出 (`LP`)。 |
 | **Token ** | 代表晶圆（携带 `token_id`, `route`, `step`）或资源占用状态。 |
 | **Transition ** | 代表动作：`u_` (Unload，从腔室取出) 和 `t_` (Load，放入腔室)。 |
-| **Release Check ** | `release_schedule` 机制用于追踪腔室未来的可用性，防止死锁和容量违规。 |
+| **Release Check ** | 基于 `_chamber_timeline` 的事后追责机制用于定位容量违规动作。 |
 
 ### 双路线逻辑
 系统支持在 `PetriEnvConfig` 中定义不同的路线：
@@ -162,22 +162,18 @@ sequenceDiagram
     Env-->>Agent: 返回 TensorDict(Obs, Reward, Done)
 ```
 
-### 释放检查数据流 (Release Checking)
-这是防止连续流死锁的关键机制。
+### 释放追踪与追责数据流 (Release Tracking + Blame)
+这是防止连续流死锁并定位违规动作的关键机制。
 
 ```mermaid
 flowchart LR
     TokenEnter[晶圆进入运输位] --> Estimate[预估到达时间]
-    Estimate --> Check[检查目标腔室容量]
+    Estimate --> FireLog[执行变迁并记录fire_log]
     
-    Check -- 容量已满 --> Violation[释放时间违规]
-    Check -- 有空位 --> Reserve[加入 release_schedule]
-    
-    Violation --> Penalty[施加惩罚]
-    Violation --> Correct[修正到达时间]
-    Correct --> Reserve
-    
-    Reserve --> Chain[向链式下游传播]
+    FireLog --> Timeline[记录_chamber_timeline进入离开时刻]
+    Timeline --> EpisodeEnd[episode结束]
+    EpisodeEnd --> Blame[blame_release_violations]
+    Blame --> Backfill[second pass回填惩罚]
 ```
 
 ## 7. 二次释放惩罚验证脚本（动作序列驱动）
@@ -206,7 +202,7 @@ python -m solutions.Continuous_model.check_release_penalty \
 
 脚本严格分两阶段执行：
 
-1. 第一阶段：`env.net.no_release_penalty = True`，按固定动作序列采样并记录每步 reward 与 `fire_log` 范围；
+1. 第一阶段：在线执行不做 release 预估与即时扣罚，只记录每步 reward、`fire_log` 与 `_chamber_timeline`；
 2. 第二阶段：序列结束后调用 `blame_release_violations()`，将 `fire_log_index -> rollout_step` 映射后的惩罚回填到对应 step reward。
 
 输出 JSON 包含：
