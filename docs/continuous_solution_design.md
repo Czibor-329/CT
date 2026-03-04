@@ -98,6 +98,7 @@ flowchart TB
 *   `+` **完工奖励**：单片完工 (`R_done`) 和全部完工 (`R_finish`) 奖励。
 *   `-` **报废惩罚**：发生驻留时间违规时的剧烈惩罚。
 *   `-` **时间成本**：每一步的固定惩罚，鼓励快速完成。
+*   `-` **系统逗留惩罚**：对“已进入系统但未完成”的每片晶圆按时间累积惩罚，抑制在 `s2/s4` 的长时间停留。
 *   `-` **拥堵/运输惩罚**：防止系统死锁或运输超时。
 
 ---
@@ -245,6 +246,7 @@ python -m solutions.Continuous_model.export_inference_sequence \
 | 问题现象 | 可能原因 | 修复建议 |
 | :--- | :--- | :--- |
 | **掩码错误 / 死锁** | `_build_action_masks` 中的掩码逻辑无效。 | 检查 `pn.py` 的 `get_enable_t` 与环境索引的同步情况。 |
-| **奖励过低** | 奖励稀疏或惩罚过于激进。 | 在 `env_config.py` 中调整 `reward_config`。增加 `proc_reward` 或减少 `time_cost`。 |
+| **奖励过低** | 奖励稀疏或惩罚过于激进。 | 在 `env_config.py` 中调整 `reward_config`。增加 `proc_reward`、减少 `time_cost`，或下调 `in_system_time_penalty_coef`。 |
+| **缓冲区滞留严重** | 缺少在系统内停留约束，或惩罚系数过小。 | 启用 `in_system_time_penalty` 并从 `in_system_time_penalty_coef=0.02` 开始小步调参（`0.03~0.05`）。 |
 | **报废率高** | 机械手太慢或系统拥堵。 | 调整 `max_wafers_in_system` 限制新晶圆进入。检查 `P_Residual_time` 是否过短。 |
 | **训练坍塌** | 熵 (Entropy) 下降过快。 | 在 `training_config` 中调整 `entropy_start` 或学习率 (LR)。 |

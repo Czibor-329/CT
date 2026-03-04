@@ -793,7 +793,7 @@ class Petri:
             if detailed:
                 return {"total": 0.0, "proc_reward": 0.0, "safe_reward": 0.0, 
                         "penalty": 0.0, "warn_penalty": 0.0, "transport_penalty": 0.0,
-                        "time_cost": 0.0}
+                        "time_cost": 0.0, "in_system_time_penalty": 0.0}
             return 0.0
 
         return self._calc_reward_original(t1, t2, moving_pre_places, detailed)
@@ -806,6 +806,7 @@ class Petri:
         transport_overtime_coef = self.config.transport_overtime_coef  # type=2 运输库所超时惩罚系数
         chamber_overtime_coef = self.config.chamber_overtime_coef      # type=1 加工腔室超时惩罚系数
         processing_reward_coef = self.config.processing_reward_coef    # 加工奖励系数
+        in_system_time_penalty_coef = self.config.in_system_time_penalty_coef  # 系统内停留惩罚系数
         
         delta_t = t2 - t1
         proc_reward = 0.0      # 加工奖励
@@ -882,8 +883,22 @@ class Petri:
         
         
         time_cost = self.c_time * delta_t if self.reward_config.get('time_cost', 1) else 0.0
+        
+        # 对“已进入系统但未完成”的每片晶圆按时间增量施加温和惩罚，抑制缓冲区长时间滞留。
+        in_system_time_penalty = 0.0
+        if self.reward_config.get('in_system_time_penalty', 1):
+            start_place_names = set(getattr(self.config, "start_place_names", None) or ["LP1", "LP2", "LP"])
+            in_system_count = 0
+            for place in self.marks:
+                if place.type == 4:  # 资源库所（机械手）
+                    continue
+                if place.name in start_place_names or place.name == "LP_done":
+                    continue
+                in_system_count += len(place.tokens)
+            in_system_time_penalty = in_system_count * delta_t * in_system_time_penalty_coef
+
         total_penalty = overtime_penalty + warn_penalty + transport_penalty
-        total = proc_reward + safe_reward - total_penalty - time_cost
+        total = proc_reward + safe_reward - total_penalty - time_cost - in_system_time_penalty
         
         if detailed:
             return {
@@ -894,6 +909,7 @@ class Petri:
                 "warn_penalty": warn_penalty,
                 "transport_penalty": transport_penalty,
                 "time_cost": time_cost,
+                "in_system_time_penalty": in_system_time_penalty,
             }
         
         return total
