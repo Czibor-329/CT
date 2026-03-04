@@ -318,18 +318,6 @@ class Petri:
         """获取变迁索引"""
         return self.id2t_name.index(name)
     
-    def _get_marks_by_type(self, place_type: int) -> List[Place]:
-        """
-        获取指定类型的库所列表。
-        
-        Args:
-            place_type: 库所类型（1=加工腔室, 2=运输库所, 3=空闲库所, 4=资源库所, 5=无驻留约束腔室）
-            
-        Returns:
-            指定类型的库所列表
-        """
-        return [p for p in self.marks if p.type == place_type]
-    
     def blame_release_violations(self) -> Dict[int, float]:
         """
         事后追责（链式前瞻）：利用 _chamber_timeline（_fire 中实时填充的占用时间线），

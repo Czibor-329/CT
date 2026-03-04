@@ -342,39 +342,6 @@ class TestFunctionality:
         
         print(f"[PASS] 数据结构优化功能一致性测试通过")
     
-    def test_compatibility_with_sim_speedup(self):
-        """
-        测试数据结构优化与 002-sim-speedup 的兼容性
-        
-        验证同时启用两种优化措施时，系统能正常工作且不产生冲突。
-        """
-        config = PetriEnvConfig(
-            n_wafer=4,
-            training_phase=2,
-            turbo_mode=True,  # 启用 002-sim-speedup
-            optimize_data_structures=True,  # 启用数据结构优化
-        )
-        env = Petri(config=config)
-        env.reset()
-        
-        # 执行一些步骤，确保不报错
-        for _ in range(50):
-            enabled = env.get_enable_t()
-            if enabled:
-                env.step(t=enabled[0], with_reward=True, detailed_reward=False)
-            else:
-                env.step(wait=True, with_reward=True, detailed_reward=False)
-        
-        # 验证缓存存在
-        assert hasattr(env, '_marks_by_type'), "_marks_by_type 缓存不存在"
-        assert len(env._marks_by_type) > 0, "_marks_by_type 缓存为空"
-        
-        # 验证可以访问缓存
-        process_places = env._get_marks_by_type(1)
-        assert len(process_places) > 0, "无法获取 type=1 的库所"
-        
-        print(f"[PASS] 数据结构优化与 002-sim-speedup 兼容性测试通过")
-    
     def test_state_consistency_with_data_structure_optimization(self):
         """
         测试状态一致性（启用数据结构优化）：验证状态转换一致性
