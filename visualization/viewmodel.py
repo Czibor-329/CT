@@ -96,7 +96,7 @@ class PetriViewModel(QObject):
         if self.done:
             return
 
-        state, reward, done, _info = self.adapter.step_concurrent(a1, a2)
+        state, reward, done, _info = self.adapter.step((a1, a2))
 
         self.step_count += 1
         self.total_reward += reward

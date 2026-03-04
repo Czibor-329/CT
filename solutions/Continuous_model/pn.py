@@ -1651,14 +1651,17 @@ class Petri:
             return False, None
         return False
 
-    def step(self, t: Optional[Union[int, List[int]]] = None, wait: bool = False, with_reward: bool = False, 
+    def step(self,
+             a1: int,
+             a2: int,
+             with_reward: bool = False,
              detailed_reward: bool = False):
         """
         执行一步动作。
         
         Args:
-            t: 要执行的变迁索引或变迁索引列表（当 wait=False 时）
-            wait: 是否执行 WAIT 动作
+            a1: TM2 选择的变迁索引，None 表示 WAIT
+            a2: TM3 选择的变迁索引，None 表示 WAIT
             with_reward: 是否返回奖励
             detailed_reward: 是否返回详细奖励分解（仅当 with_reward=True 时有效）
             
@@ -1677,7 +1680,7 @@ class Petri:
                 return True, -100, True  # 超时视为报废
             return True, True
 
-        if wait:
+        if a1 is None and a2 is None:
             t1 = self.time
 
             tm2_enabled, tm3_enabled = self.get_enable_t()
@@ -1767,14 +1770,18 @@ class Petri:
         t2 = self.time + self.ttime
         
         # 处理单个变迁或变迁列表及其前置库所
-        transitions = [t] if isinstance(t, (int, np.integer)) else t
+        transitions = []
+        if a1 is not None:
+            transitions.append(a1)
+        if a2 is not None:
+            transitions.append(a2)
         pre_places_indices = []
         for t_idx in transitions:
             pre_places_indices.extend(np.flatnonzero(self.pre[:, t_idx] > 0))
         pre_places = np.array(pre_places_indices)
         
         reward_result = self.calc_reward(t1, t2, moving_pre_places=pre_places, detailed=detailed_reward)
-        self._fire(t=t)
+        self._fire(t=transitions)
         
         # 添加单片完工奖励（在 _fire 中累积）
         if self._per_wafer_reward > 0:
@@ -1882,46 +1889,6 @@ class Petri:
         affected2 = (pre2 | pst2) - resource_indices
         
         return len(affected1 & affected2) == 0
-
-    def step_concurrent(self, a1: Optional[int] = None, a2: Optional[int] = None,
-                        wait1: bool = False, wait2: bool = False,
-                        with_reward: bool = False, detailed_reward: bool = False):
-        """
-        并发执行两个机械手的动作。
-        
-        采用同步执行策略：两个动作同时开始，时间推进到两者都完成。
-        
-        Args:
-            a1: TM2 的动作（变迁索引），或 None 表示等待
-            a2: TM3 的动作（变迁索引），或 None 表示等待
-            wait1: TM2 是否执行 WAIT（当 a1 为 None 时）
-            wait2: TM3 是否执行 WAIT（当 a2 为 None 时）
-            with_reward: 是否返回奖励
-            detailed_reward: 是否返回详细奖励分解
-            
-        Returns:
-            如果 with_reward=True: (done, reward, scrap)
-            否则: (done, scrap)
-        """
-        # 处理等待参数
-        if a1 is None:
-            wait1 = True
-        if a2 is None:
-            wait2 = True
-        
-        # 如果两个都是等待
-        if wait1 and wait2:
-            return self.step(wait=True, with_reward=with_reward, detailed_reward=detailed_reward)
-        
-        # 收集所有非等待的动作
-        actions = []
-        if not wait1 and a1 is not None:
-            actions.append(a1)
-        if not wait2 and a2 is not None:
-            actions.append(a2)
-            
-        # 调用 step 执行（单个或多个动作）
-        return self.step(t=actions, wait=False, with_reward=with_reward, detailed_reward=detailed_reward)
 
 
     def calc_wafer_statistics(self) -> Dict[str, Any]:

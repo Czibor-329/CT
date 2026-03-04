@@ -60,13 +60,29 @@ class PetriAdapter(AlgorithmAdapter):
         self.env.reset()
         return self._collect_state_info()
 
-    def step(self, action: int) -> Tuple[StateInfo, float, bool, Dict]:
-        result = self.net.step(
-            t=action if action < self.net.T else None,
-            wait=(action == self.net.T),
-            with_reward=True,
-            detailed_reward=True,
-        )
+    def step(self, action: int | Tuple[int, int]) -> Tuple[StateInfo, float, bool, Dict]:
+        """
+        支持单动作与并发动作用法：
+        - int: 单动作（含 WAIT）
+        - (a1, a2): 并发动作，a1/a2=-1 表示 WAIT
+        """
+        if isinstance(action, tuple):
+            a1, a2 = action
+            tm2_action = None if a1 == -1 else a1
+            tm3_action = None if a2 == -1 else a2
+            result = self.net.step(
+                a1=tm2_action,
+                a2=tm3_action,
+                with_reward=True,
+                detailed_reward=True,
+            )
+        else:
+            result = self.net.step(
+                t=action if action < self.net.T else None,
+                wait=(action == self.net.T),
+                with_reward=True,
+                detailed_reward=True,
+            )
 
         # pn.py: (done, reward_result, scrap)
         done = bool(result[0])
@@ -85,12 +101,23 @@ class PetriAdapter(AlgorithmAdapter):
 
         state_info = self._collect_state_info()
         info = {"done": done, "reward": reward, "scrap": scrap, "detail": self._last_reward_detail}
-        self._last_action_history.append({
-            "step": len(self._last_action_history) + 1,
-            "action": self.get_action_name(action),
-            "reward": reward,
-            "detail": self._last_reward_detail,
-        })
+
+        if isinstance(action, tuple):
+            a1_name = "WAIT" if a1 == -1 else self._format_transition_name(self.net.id2t_name[a1])
+            a2_name = "WAIT" if a2 == -1 else self._format_transition_name(self.net.id2t_name[a2])
+            self._last_action_history.append({
+                "step": len(self._last_action_history) + 1,
+                "action": f"TM2:{a1_name}, TM3:{a2_name}",
+                "reward": reward,
+                "detail": self._last_reward_detail,
+            })
+        else:
+            self._last_action_history.append({
+                "step": len(self._last_action_history) + 1,
+                "action": self.get_action_name(action),
+                "reward": reward,
+                "detail": self._last_reward_detail,
+            })
         return state_info, reward, done, info
 
     def get_action_name(self, action: int) -> str:
@@ -171,57 +198,6 @@ class PetriAdapter(AlgorithmAdapter):
         ))
         
         return tm2_actions, tm3_actions
-
-    def step_concurrent(self, a1: int, a2: int) -> Tuple[StateInfo, float, bool, Dict]:
-        """
-        执行并发动作。
-        
-        Args:
-            a1: TM2 的变迁索引，-1 表示 WAIT
-            a2: TM3 的变迁索引，-1 表示 WAIT
-            
-        Returns:
-            (state_info, reward, done, info)
-        """
-        # 转换为 pn.py 的参数格式
-        tm2_action = None if a1 == -1 else a1
-        tm3_action = None if a2 == -1 else a2
-        
-        result = self.net.step_concurrent(
-            a1=tm2_action,
-            a2=tm3_action,
-            with_reward=True,
-            detailed_reward=True,
-        )
-        
-        done = bool(result[0])
-        reward_result = result[1]
-        scrap = bool(result[2]) if len(result) > 2 else False
-        
-        if isinstance(reward_result, dict):
-            self._last_reward_detail = {k: float(v) for k, v in reward_result.items() if isinstance(v, (int, float))}
-            reward = float(reward_result.get("total", 0.0))
-        else:
-            self._last_reward_detail = {}
-            reward = float(reward_result)
-        
-        if not done:
-            done = getattr(self.net, "done_count", 0) >= getattr(self.net, "n_wafer", 0)
-        
-        state_info = self._collect_state_info()
-        info = {"done": done, "reward": reward, "scrap": scrap, "detail": self._last_reward_detail}
-        
-        # 记录动作历史
-        a1_name = "WAIT" if a1 == -1 else self._format_transition_name(self.net.id2t_name[a1])
-        a2_name = "WAIT" if a2 == -1 else self._format_transition_name(self.net.id2t_name[a2])
-        self._last_action_history.append({
-            "step": len(self._last_action_history) + 1,
-            "action": f"TM2:{a1_name}, TM3:{a2_name}",
-            "reward": reward,
-            "detail": self._last_reward_detail,
-        })
-        
-        return state_info, reward, done, info
 
     def get_reward_breakdown(self) -> Dict[str, float]:
         return dict(self._last_reward_detail or {})

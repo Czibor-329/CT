@@ -197,8 +197,8 @@ class Env_PN_Concurrent(EnvBase):
         else:
             a2 = self.tm3_transition_indices[action_tm3]
 
-        # 调用并发 step
-        done, reward_result, scrap = self.net.step_concurrent(
+        # 调用并发 step（统一入口）
+        done, reward_result, scrap = self.net.step(
             a1=a1, a2=a2,
             with_reward=True, detailed_reward=self.detailed_reward
         )

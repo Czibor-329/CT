@@ -39,7 +39,7 @@ Petri(
 - `reset()` 重置环境
 - `get_enable_t() -> Tuple[List[int], List[int]]` 获取当前可使能变迁（按 TM2/TM3 分组）
 - `next_enable_time() -> int` 估计下一可使能时间
-- `step(t=None, wait=False, with_reward=False, detailed_reward=False)` 执行一步
+- `step(a1=None, a2=None, wait1=False, wait2=False, with_reward=False, detailed_reward=False, t=None, wait=None)` 执行一步（并发优先，t/wait 兼容）
 - `render_gantt(out_path)` 输出甘特图
 
 **奖励计算**

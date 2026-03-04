@@ -148,7 +148,7 @@ sequenceDiagram
     
     Agent->>Env: step(action_tm2, action_tm3)
     Env->>Env: 将动作索引解码为变迁 ID
-    Env->>PN: step_concurrent(t1, t2)
+    Env->>PN: step(a1, a2)
     
     alt 是等待命令 (Wait)
         PN->>PN: 时间推进 (+5s)
