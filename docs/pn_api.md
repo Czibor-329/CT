@@ -116,6 +116,9 @@ class BasedToken:
 - `no_release_penalty: bool`：第一阶段采样时置 `True`，第二阶段回填惩罚时置 `False`
 - `_chamber_timeline/_chamber_active`：记录 PM1/PM3/PM4 的进入离开时间线
 
+**驻留时间更新规则（单设备）**
+- `LP`（type=3）中的 token 不更新 `stay_time`，与 `pn.py` 保持一致
+
 **停滞惩罚（单设备已接入）**
 - 沿用 `pn.py` 思路：累计连续 WAIT 时间（`_consecutive_wait_time`）
 - 当累计时间达到 `idle_timeout = max(processing_time)+30` 且未触发过时，施加一次 `idle_timeout_penalty`

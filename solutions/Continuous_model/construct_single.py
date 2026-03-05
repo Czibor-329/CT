@@ -30,8 +30,8 @@ def build_single_device_net(n_wafer: int, ttime: int = 5) -> Dict[str, object]:
         "LP": SingleModuleSpec(tokens=n_wafer, ptime=0, capacity=max(1, n_wafer)),
         "PM1": SingleModuleSpec(tokens=0, ptime=100, capacity=1),
         "PM2": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
-        "PM3": SingleModuleSpec(tokens=0, ptime=230, capacity=1),
-        "PM4": SingleModuleSpec(tokens=0, ptime=230, capacity=1),
+        "PM3": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
+        "PM4": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
         "PM6": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
         "LP_done": SingleModuleSpec(tokens=0, ptime=0, capacity=max(1, n_wafer)),
         # 关键约束：在 d_TM1 中停留 ttime 秒后，才允许进入目标腔室

@@ -193,7 +193,7 @@ def load_model(model_path: str, adapter: PetriAdapter):
                 # 使用模型预测
                 with torch.no_grad():
                     # explicitly set mode to MODE (ArgMax) to match viz.py manual fix
-                    with set_exploration_type(ExplorationType.MODE):
+                    with set_exploration_type(ExplorationType.RANDOM):
                         td = policy(td)
                         action = td["action"].item()
                 

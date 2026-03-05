@@ -15,7 +15,7 @@ from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
-MAX_TIME = 1500
+MAX_TIME = 2600
 
 
 class PetriSingleDevice:
@@ -107,6 +107,8 @@ class PetriSingleDevice:
         if dt <= 0:
             return
         for p in self.marks:
+            if p.type == 3:  # 跳过 LP 中的 wafer
+                continue
             for tok in p.tokens:
                 tok.stay_time += dt
 
