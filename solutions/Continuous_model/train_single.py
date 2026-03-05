@@ -1,13 +1,266 @@
 """
-单设备训练入口（占位实现）。
-
-说明：
-- 该文件仅提供单设备环境构建入口，后续可按现有 PPO 训练脚本扩展。
+单设备单动作 PPO 训练脚本（两阶段 release 追责回填）。
 """
 
 from __future__ import annotations
 
+import os
+from collections import defaultdict
+from datetime import datetime
+
+import torch
+import torch.nn as nn
+from torch.optim import Adam
+from torchrl.modules import MaskedCategorical
+from tensordict import TensorDict
+
+from data.ppo_configs.training_config import PPOTrainingConfig
 from solutions.Continuous_model.env_single import Env_PN_Single
+from solutions.PPO.network.models import MaskedPolicyHead
+from pathlib import Path
+
+
+def _extract_step_result(td_next):
+    if "next" in td_next.keys():
+        reward = td_next["next", "reward"]
+        terminated = td_next["next", "terminated"]
+        finish = td_next["next", "finish"] if "finish" in td_next["next"].keys() else td_next["next", "terminated"]
+        scrap = td_next["next", "scrap"] if "scrap" in td_next["next"].keys() else torch.tensor(False)
+        time_t = td_next["next", "time"]
+        next_obs = td_next["next", "observation"]
+    else:
+        reward = td_next["reward"]
+        terminated = td_next["terminated"]
+        finish = td_next.get("finish", td_next["terminated"])
+        scrap = td_next.get("scrap", torch.tensor(False))
+        time_t = td_next["time"]
+        next_obs = td_next["observation"]
+    return reward, terminated, finish, scrap, time_t, next_obs
+
+
+def _to_next_state(td_next):
+    return td_next["next"].clone() if "next" in td_next.keys() else td_next.clone()
+
+
+def collect_rollout_single(env: Env_PN_Single, policy_backbone: MaskedPolicyHead, n_steps: int, device: str = "cpu"):
+    """
+    两阶段采样：
+    1) no_release_penalty=True 收集轨迹
+    2) episode 结束后 blame_release_violations 回填奖励
+    """
+    data = {
+        "observation": [],
+        "observation_f": [],
+        "action_mask": [],
+        "action": [],
+        "log_prob": [],
+        "reward": [],
+        "done": [],
+        "finish": [],
+        "scrap": [],
+        "time": [],
+        "next_observation": [],
+        "next_observation_f": [],
+    }
+
+    env.net.no_release_penalty = True
+    fire_log_ranges = []
+    td = env.reset()
+    second_pass_events = 0
+
+    for _ in range(n_steps):
+        obs = td["observation"].unsqueeze(0).to(device)
+        obs_f = obs.float()
+        mask = td["action_mask"].unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            logits = policy_backbone(obs_f)
+            dist = MaskedCategorical(logits=logits, mask=mask.bool())
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
+
+        data["observation"].append(td["observation"])
+        data["observation_f"].append(td["observation"].float())
+        data["action_mask"].append(td["action_mask"])
+        data["action"].append(action.squeeze(0).cpu())
+        data["log_prob"].append(log_prob.squeeze(0).cpu())
+
+        fire_start = len(env.net.fire_log)
+
+        step_td = td.clone()
+        step_td["action"] = action.squeeze(0).cpu()
+        td_next = env.step(step_td)
+
+        fire_end = len(env.net.fire_log)
+        fire_log_ranges.append((fire_start, fire_end))
+
+        reward, terminated, finish, scrap, time_t, next_obs = _extract_step_result(td_next)
+        data["reward"].append(reward.cpu())
+        data["done"].append(terminated.cpu())
+        data["finish"].append(finish.cpu())
+        data["scrap"].append(scrap.cpu())
+        data["time"].append(time_t.cpu())
+        data["next_observation"].append(next_obs.cpu())
+        data["next_observation_f"].append(next_obs.float().cpu())
+
+        if bool(terminated.item() if hasattr(terminated, "item") else terminated):
+            blame = env.net.blame_release_violations()
+            if blame:
+                for fire_idx, penalty in blame.items():
+                    for step_idx, (fstart, fend) in enumerate(fire_log_ranges):
+                        if fstart <= fire_idx < fend:
+                            data["reward"][step_idx] = data["reward"][step_idx] - float(penalty)
+                            second_pass_events += 1
+                            break
+            td = env.reset()
+            fire_log_ranges = []
+        else:
+            td = _to_next_state(td_next)
+
+    env.net.no_release_penalty = False
+    rollout = TensorDict({k: torch.stack(v) for k, v in data.items()}, batch_size=[n_steps])
+    return rollout, second_pass_events
+
+
+def train_single(
+    config: PPOTrainingConfig | None = None,
+    training_phase: int = 2,
+    checkpoint_path: str | None = None,
+):
+    assert config is not None, "training config must be provided"
+
+    print(f"[Single PPO Training - Phase {training_phase}]")
+    print(config)
+
+    torch.manual_seed(config.seed)
+    device = config.device
+    env = Env_PN_Single(training_phase=training_phase, detailed_reward=True)
+
+    n_obs = env.observation_spec["observation"].shape[0]
+    n_actions = env.n_actions
+    print(f"  观测维度: {n_obs}")
+    print(f"  动作空间: {n_actions}")
+
+    policy_backbone = MaskedPolicyHead(
+        hidden=config.n_hidden,
+        n_obs=n_obs,
+        n_actions=n_actions,
+        n_layers=config.n_layer,
+    ).to(device)
+
+    if checkpoint_path is not None and os.path.exists(checkpoint_path):
+        print(f"从 checkpoint 加载: {checkpoint_path}")
+        state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        policy_backbone.load_state_dict(state_dict)
+
+    value_net = nn.Sequential(
+        nn.Linear(n_obs, config.n_hidden), nn.ReLU(),
+        nn.Linear(config.n_hidden, config.n_hidden), nn.ReLU(),
+        nn.Linear(config.n_hidden, config.n_hidden), nn.ReLU(),
+        nn.Linear(config.n_hidden, 1),
+    ).to(device)
+
+    optim = Adam(list(policy_backbone.parameters()) + list(value_net.parameters()), lr=config.lr)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved_models_dir = os.path.join(os.path.dirname(__file__), "saved_models")
+    os.makedirs(saved_models_dir, exist_ok=True)
+    backup_dir = os.path.join(saved_models_dir, f"single_{timestamp}")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    model_prefix = f"CT_single_phase{training_phase}"
+    best_model_path = os.path.join(saved_models_dir, f"{model_prefix}_best.pt")
+    best_reward = float("-inf")
+    log = defaultdict(list)
+
+    for batch_idx in range(config.total_batch):
+        rollout, second_pass_events = collect_rollout_single(env, policy_backbone, config.frames_per_batch, device=device)
+        rollout = rollout.to(device)
+
+        with torch.no_grad():
+            values = value_net(rollout["observation_f"]).squeeze(-1)
+            next_values = value_net(rollout["next_observation_f"]).squeeze(-1)
+            rewards = rollout["reward"].squeeze(-1)
+            dones = rollout["done"].float().squeeze(-1)
+            delta = rewards + config.gamma * next_values * (1 - dones) - values
+            advantages = torch.zeros_like(rewards)
+            gae = 0.0
+            for t in reversed(range(len(rewards))):
+                gae = delta[t] + config.gamma * config.gae_lambda * (1 - dones[t]) * gae
+                advantages[t] = gae
+            returns = advantages + values
+
+        rollout["advantage"] = advantages
+        rollout["value_target"] = returns
+
+        for _ in range(config.num_epochs):
+            indices = torch.randperm(len(rollout))
+            for start in range(0, len(rollout), config.sub_batch_size):
+                end = start + config.sub_batch_size
+                batch = rollout[indices[start:end]]
+
+                obs_f = batch["observation_f"]
+                mask = batch["action_mask"].bool()
+                old_action = batch["action"]
+                old_log_prob = batch["log_prob"]
+                adv = batch["advantage"]
+                ret = batch["value_target"]
+
+                logits = policy_backbone(obs_f)
+                dist = MaskedCategorical(logits=logits, mask=mask)
+                new_log_prob = dist.log_prob(old_action)
+
+                ratio = torch.exp(new_log_prob - old_log_prob)
+                adv_norm = (adv - adv.mean()) / (adv.std() + 1e-8)
+                surr1 = ratio * adv_norm
+                surr2 = torch.clamp(ratio, 1 - config.clip_epsilon, 1 + config.clip_epsilon) * adv_norm
+                policy_loss = -torch.min(surr1, surr2).mean()
+
+                value_pred = value_net(obs_f).squeeze(-1)
+                value_loss = 0.5 * (value_pred - ret).pow(2).mean()
+                entropy_loss = -config.entropy_start * dist.entropy().mean()
+                loss = policy_loss + value_loss + entropy_loss
+
+                optim.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(list(policy_backbone.parameters()) + list(value_net.parameters()), max_norm=1.0)
+                optim.step()
+
+        ep_reward = rollout["reward"].sum().item()
+        finish_count = rollout["finish"].sum().item()
+        scrap_count = rollout["scrap"].sum().item()
+
+        finish_mask = rollout["finish"].squeeze(-1).bool()
+        if finish_mask.any():
+            finish_times = rollout["time"][finish_mask].squeeze(-1).float()
+            avg_makespan = finish_times.mean().item()
+        else:
+            avg_makespan = 0.0
+
+        log["reward"].append(ep_reward)
+        log["finish"].append(finish_count)
+        log["scrap"].append(scrap_count)
+        log["makespan"].append(avg_makespan)
+        log["second_pass_events"].append(second_pass_events)
+
+        print(
+            f"batch {batch_idx+1:04d} | reward={ep_reward:.2f} | finish={int(finish_count)} "
+            f"| scrap={int(scrap_count)} | makespan={avg_makespan:.1f} | second_pass={second_pass_events}"
+        )
+
+        if ep_reward > best_reward and finish_count > 0:
+            best_reward = ep_reward
+            torch.save(policy_backbone.state_dict(), best_model_path)
+            backup_path = os.path.join(backup_dir, f"{model_prefix}_best.pt")
+            torch.save(policy_backbone.state_dict(), backup_path)
+            print(f"  -> New best model! reward={ep_reward:.2f}")
+
+    print(f"\nTraining done. Best reward: {best_reward:.2f}")
+    final_path = os.path.join(backup_dir, f"{model_prefix}_final.pt")
+    torch.save(policy_backbone.state_dict(), final_path)
+    print(f"Final model: {final_path}")
+    print(f"Best model: {best_model_path}")
+    return log, policy_backbone
 
 
 def build_single_env() -> Env_PN_Single:
@@ -15,6 +268,14 @@ def build_single_env() -> Env_PN_Single:
 
 
 if __name__ == "__main__":
-    env = build_single_env()
-    td = env.reset()
-    print("single env ready, obs shape:", td["observation"].shape)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="单设备单动作 PPO 训练（两阶段 release 回填）")
+    parser.add_argument("--phase", type=int, default=2, help="训练阶段 (1 or 2)")
+    parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint路径")
+    args = parser.parse_args()
+
+    path = Path(__file__).parents[2] / "data" / "ppo_configs" / "s_train.json"
+    cfg = PPOTrainingConfig.load(path)
+    print(f"从 {path} 加载配置")
+    train_single(config=cfg, training_phase=args.phase, checkpoint_path=args.checkpoint)

@@ -53,7 +53,7 @@ def example_3_load_from_file():
     print("=" * 60)
     
     # 加载阶段1配置
-    config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+    config = PetriEnvConfig.load("data/petri_configs/s_train.json")
     print(config)
     
     # 创建环境
@@ -95,7 +95,7 @@ def example_5_phase_comparison():
     print("=" * 60)
     
     # 阶段1
-    config1 = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+    config1 = PetriEnvConfig.load("data/petri_configs/s_train.json")
     net1 = Petri(config=config1)
     
     # 阶段2
@@ -165,7 +165,7 @@ def example_8_modify_existing_config():
     print("=" * 60)
     
     # 加载现有配置
-    config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+    config = PetriEnvConfig.load("data/petri_configs/s_train.json")
     
     # 修改参数
     config.n_wafer = 8

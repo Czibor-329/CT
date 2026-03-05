@@ -91,14 +91,16 @@ flowchart TB
 - 需要在不破坏现有 `pn.py`/并发训练流程的前提下，快速试验单设备工艺。
 
 ### Behavior
-- 工艺路线：`LP -> PM1(100s) -> [PM3|PM4](300s) -> PM5(100s) -> LP_done`
-- `PM2/PM6` 仅用于界面占位展示，动作不可达。
+- 工艺路线：`LP -> PM1(100s) -> [PM3|PM4](300s) -> LP_done`
+- `PM2/PM6` 仅用于界面占位展示，动作不可达；`PM5` 作为 UI 占位显示，不参与模型工艺流转。
 - 执行链：`construct_single` 构网 -> `_get_enable_t` -> `step` -> `calc_reward`
 - 使能动作接口：`List[int]`（单机械手语义）
+- 释放追责：支持 `blame_release_violations()`，利用单设备 `_chamber_timeline` 做 second-pass 回填
 
 ### Impact
 - 原双机械手并发训练和可视化入口保持兼容。
 - 单设备逻辑集中在 `Continuous_model` 新文件中，便于后续独立迭代。
+- 单设备训练已支持两阶段：阶段1收集轨迹（关闭在线 release 惩罚），阶段2执行 `blame_release_violations` 回填奖励。
 
 ---
 

@@ -23,19 +23,19 @@ class SingleModuleSpec:
 def build_single_device_net(n_wafer: int, ttime: int = 5) -> Dict[str, object]:
     """
     构建单设备 Petri 网结构：
-    LP -> PM1 -> [PM3, PM4] -> PM5 -> LP_done
+    LP -> PM1 -> [PM3, PM4] -> LP_done
     并保留 PM2/PM6（无工艺边，仅展示）。
     """
     modules: Dict[str, SingleModuleSpec] = {
         "LP": SingleModuleSpec(tokens=n_wafer, ptime=0, capacity=max(1, n_wafer)),
         "PM1": SingleModuleSpec(tokens=0, ptime=100, capacity=1),
         "PM2": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
-        "PM3": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
-        "PM4": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
-        "PM5": SingleModuleSpec(tokens=0, ptime=100, capacity=1),
+        "PM3": SingleModuleSpec(tokens=0, ptime=230, capacity=1),
+        "PM4": SingleModuleSpec(tokens=0, ptime=230, capacity=1),
         "PM6": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
         "LP_done": SingleModuleSpec(tokens=0, ptime=0, capacity=max(1, n_wafer)),
-        "d_TM1": SingleModuleSpec(tokens=0, ptime=0, capacity=1),
+        # 关键约束：在 d_TM1 中停留 ttime 秒后，才允许进入目标腔室
+        "d_TM1": SingleModuleSpec(tokens=0, ptime=ttime, capacity=1),
     }
 
     id2p_name = list(modules.keys())
@@ -43,8 +43,7 @@ def build_single_device_net(n_wafer: int, ttime: int = 5) -> Dict[str, object]:
         "u_LP_PM1", "t_PM1",
         "u_PM1_PM3", "t_PM3",
         "u_PM1_PM4", "t_PM4",
-        "u_PM3_PM5", "u_PM4_PM5", "t_PM5",
-        "u_PM5_LP_done", "t_LP_done",
+        "u_PM3_LP_done", "u_PM4_LP_done", "t_LP_done",
     ]
 
     p_idx = {name: i for i, name in enumerate(id2p_name)}
@@ -67,11 +66,8 @@ def build_single_device_net(n_wafer: int, ttime: int = 5) -> Dict[str, object]:
     add_arc("PM1", "u_PM1_PM4", "d_TM1")
     add_arc("d_TM1", "t_PM4", "PM4")
 
-    add_arc("PM3", "u_PM3_PM5", "d_TM1")
-    add_arc("PM4", "u_PM4_PM5", "d_TM1")
-    add_arc("d_TM1", "t_PM5", "PM5")
-
-    add_arc("PM5", "u_PM5_LP_done", "d_TM1")
+    add_arc("PM3", "u_PM3_LP_done", "d_TM1")
+    add_arc("PM4", "u_PM4_LP_done", "d_TM1")
     add_arc("d_TM1", "t_LP_done", "LP_done")
 
     m0 = np.array([modules[name].tokens for name in id2p_name], dtype=int)

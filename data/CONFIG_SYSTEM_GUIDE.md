@@ -47,7 +47,7 @@ from data.ppo_configs.training_config import PPOTrainingConfig
 from solutions.PPO.train import train
 
 # 加载配置
-config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 
 # 训练
 log, policy = train(env, eval_env, config=config)
@@ -70,7 +70,7 @@ from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn import Petri
 
 # 加载配置
-config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 # 创建环境
 net = Petri(config=config)
@@ -136,7 +136,7 @@ data/ppo_configs/training_runs/
 # 方法1: 修改现有配置
 from data.ppo_configs.training_config import PPOTrainingConfig
 
-config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 config.lr = 5e-4
 config.total_batch = 300
 config.save("data/ppo_configs/experiment_01.json")
@@ -201,7 +201,7 @@ python solutions/PPO/run_ppo.py \
 ```python
 from data.ppo_configs.training_config import PPOTrainingConfig
 
-config1 = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+config1 = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 config2 = PPOTrainingConfig.load("data/ppo_configs/phase2_config.json")
 
 # 打印配置
@@ -299,8 +299,8 @@ except Exception as e:
 
 ```python
 # 确保训练阶段一致
-ppo_config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
-env_config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+ppo_config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
+env_config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 assert ppo_config.training_phase == env_config.training_phase, \
     "PPO和环境的训练阶段必须一致！"

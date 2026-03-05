@@ -24,7 +24,7 @@ class PetriSingleAdapter(AlgorithmAdapter):
         self.net = env.net
         self._last_reward_detail: Dict[str, float] = {}
         self._history: List[Dict[str, Any]] = []
-        self.disabled_chambers = {"PM2", "PM6"}
+        self.disabled_chambers = {"PM2", "PM5", "PM6"}
 
     def reset(self) -> StateInfo:
         self.env.reset()

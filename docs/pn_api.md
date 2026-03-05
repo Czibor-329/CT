@@ -92,15 +92,16 @@ class BasedToken:
 
 **说明**：单设备 Petri 网实现（独立文件，不改原 `pn.py`），仅 1 个机械手，8 个腔体命名如下：
 - `LP`, `LP_done`, `PM1`~`PM6`
-- 其中 `PM2/PM6` 为展示腔体，不参与工艺流转
+- 其中 `PM2/PM6` 为展示腔体，不参与工艺流转；`PM5` 为 UI 占位腔体（模型不参与流转）
 
 **构网来源**
 - `solutions/Continuous_model/construct_single.py`
 - 在初始化阶段生成：`pre/pst/net/m0/md/id2p_name/id2t_name/marks`
+- `d_TM1` 在构网中设置 `processing_time=5s`（默认），用于约束“运输位停留后才能 `t_*` 进入腔室”
 
 **工艺路线**
-- `LP -> PM1(100s) -> PM3(300s) -> PM5(100s) -> LP_done`
-- `LP -> PM1(100s) -> PM4(300s) -> PM5(100s) -> LP_done`
+- `LP -> PM1(100s) -> PM3(300s) -> LP_done`
+- `LP -> PM1(100s) -> PM4(300s) -> LP_done`
 
 **主要接口**
 - `reset()`：重置网状态
@@ -108,4 +109,13 @@ class BasedToken:
 - `get_enable_t() -> List[int]`：外部使能接口
 - `step(t=None, wait=None, with_reward=False, detailed_reward=False, ...)`：执行单步（动作校验 -> 发射/等待 -> 时间推进 -> 奖励 -> done）
 - `calc_reward(t1, t2, detailed=False)`：奖励计算（`detailed_reward=True` 时返回含 `total` 的字典）
+- `blame_release_violations() -> Dict[int, float]`：基于 `_chamber_timeline` 的单设备事后追责，输出 `fire_log_index -> penalty`
 - `calc_wafer_statistics()`：返回统计字典（供可视化左栏读取）
+
+**两阶段训练相关字段**
+- `no_release_penalty: bool`：第一阶段采样时置 `True`，第二阶段回填惩罚时置 `False`
+- `_chamber_timeline/_chamber_active`：记录 PM1/PM3/PM4 的进入离开时间线
+
+**停滞惩罚（单设备已接入）**
+- 沿用 `pn.py` 思路：累计连续 WAIT 时间（`_consecutive_wait_time`）
+- 当累计时间达到 `idle_timeout = max(processing_time)+30` 且未触发过时，施加一次 `idle_timeout_penalty`

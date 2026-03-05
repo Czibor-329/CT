@@ -15,13 +15,12 @@ from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
-MAX_TIME = 4000
+MAX_TIME = 1000
 
 
 class PetriSingleDevice:
-    def __init__(self, config: Optional[PetriEnvConfig] = None) -> None:
-        if config is None:
-            config = PetriEnvConfig()
+    def __init__(self, config: PetriEnvConfig = None) -> None:
+        assert config is not None, "config must be provided"
         self.config = config
 
         self.n_wafer = int(config.n_wafer)
@@ -37,7 +36,9 @@ class PetriSingleDevice:
         self.D_Residual_time = int(getattr(config, "D_Residual_time", 10))
         self.T_transport = int(getattr(config, "T_transport", 5))
         self.T_load = int(getattr(config, "T_load", 5))
+        self.idle_penalty = float(getattr(config, "idle_penalty", 500))
         self.stop_on_scrap = bool(getattr(config, "stop_on_scrap", True))
+        self.c_release_violation = float(getattr(config, "c_release_violation", 5))
         self.reward_config = dict(getattr(config, "reward_config", {}))
 
         info = build_single_device_net(n_wafer=self.n_wafer, ttime=max(1, self.T_transport))
@@ -60,6 +61,7 @@ class PetriSingleDevice:
         self.marks: List[Place] = self._clone_marks(self.ori_marks)
 
         self.time = 0
+        self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self.done_count = 0
         self.scrap_count = 0
         self.resident_violation_count = 0
@@ -68,6 +70,11 @@ class PetriSingleDevice:
         self.enable_statistics = True
         self._per_wafer_reward = 0.0
         self._token_stats: Dict[int, Dict[str, Any]] = {}
+        self._idle_penalty_applied = False
+        self._consecutive_wait_time = 0
+        self.no_release_penalty = False
+        self._chamber_timeline: Dict[str, list] = {"PM1": [], "PM3": [], "PM4": []}
+        self._chamber_active: Dict[str, Dict[int, int]] = {"PM1": {}, "PM3": {}, "PM4": {}}
 
     @staticmethod
     def _clone_marks(marks: List[Place]) -> List[Place]:
@@ -111,23 +118,6 @@ class PetriSingleDevice:
             return True
         return place.head().stay_time >= place.processing_time
 
-    def _next_enable_dt(self) -> int:
-        remain: List[int] = []
-        # 加工完成事件
-        for p in self.marks:
-            if p.type != 1 or p.processing_time <= 0 or len(p.tokens) == 0:
-                continue
-            r = p.processing_time - p.head().stay_time
-            if r > 0:
-                remain.append(r)
-        # 运输位 d_TM1 停留完成事件（到达目标腔室前必须停留 T_transport）
-        d_tm = self._get_place("d_TM1")
-        if len(d_tm.tokens) > 0:
-            r_d = self.T_transport - d_tm.head().stay_time
-            if r_d > 0:
-                remain.append(r_d)
-        return min(remain) if remain else max(1, self.ttime)
-
     def _check_scrap(self) -> tuple[bool, Optional[Dict[str, Any]]]:
         for p in self.marks:
             if p.type != 1 or len(p.tokens) == 0:
@@ -144,6 +134,68 @@ class PetriSingleDevice:
                     "type": "resident",
                 }
         return False, None
+
+    def blame_release_violations(self) -> Dict[int, float]:
+        """
+        事后追责：基于当前 fire_log 与 _chamber_timeline，回溯可能导致下游容量冲突的 u_* 动作。
+        返回 fire_log_index -> penalty。
+        """
+        blame: Dict[int, float] = {}
+        if not self.fire_log:
+            return blame
+
+        proc_times = {p.name: p.processing_time for p in self.marks}
+        capacities = {p.name: p.capacity for p in self.marks}
+        intervals_by_chamber: Dict[str, list] = {}
+        for ch in ("PM1", "PM3", "PM4"):
+            intervals = []
+            for (enter, leave, wid) in self._chamber_timeline.get(ch, []):
+                l = leave if leave is not None else enter + proc_times.get(ch, 0)
+                intervals.append((enter, l, wid))
+            intervals.sort(key=lambda x: x[0])
+            intervals_by_chamber[ch] = intervals
+
+        edge_transfer = self.T_transport + self.T_load
+
+        def will_exceed_capacity(intervals, at_time, cap, current_wid):
+            occupied = sum(1 for (e, l, wid0) in intervals if e <= at_time < l and wid0 < current_wid)
+            return occupied + 1 > cap
+
+        # 单设备 downstream chain（分支表示二选一路由）
+        chain_map: Dict[str, List[List[str]]] = {
+            "u_LP_PM1": [["PM1", "PM3"], ["PM1", "PM4"]],
+        }
+
+        penalty_coeff = float(self.c_release_violation) * 100.0
+        for i, log in enumerate(self.fire_log):
+            t_name = log.get("t_name", "")
+            wid = int(log.get("token_id", -1))
+            if wid < 0 or not t_name.startswith("u_"):
+                continue
+            chains = chain_map.get(t_name, [])
+            if not chains:
+                continue
+
+            t_leave = int(log.get("t1", 0))
+            violated_any_branch = False
+            for chain in chains:
+                arrival = t_leave + edge_transfer
+                violated_this_branch = False
+                for idx, station in enumerate(chain):
+                    intervals = intervals_by_chamber.get(station, [])
+                    cap = capacities.get(station, 1)
+                    if will_exceed_capacity(intervals, arrival, cap, wid):
+                        violated_this_branch = True
+                        break
+                    if idx < len(chain) - 1:
+                        arrival = arrival + proc_times.get(station, 0) + edge_transfer
+                if violated_this_branch:
+                    violated_any_branch = True
+                    break
+
+            if violated_any_branch:
+                blame[i] = penalty_coeff
+        return blame
 
     def _get_enable_t(self) -> List[int]:
         enabled: List[int] = []
@@ -174,7 +226,8 @@ class PetriSingleDevice:
                     continue
                 # 与级联设备一致：晶圆在 d_TM1 中需停留一个运输周期后，t_* 才允许发射
                 d_place = self._get_place("d_TM1")
-                if len(d_place.tokens) > 0 and d_place.head().stay_time < self.T_transport:
+                dwell_time = max(0, int(getattr(d_place, "processing_time", self.T_transport)))
+                if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
                     continue
             enabled.append(t)
         return enabled
@@ -199,38 +252,53 @@ class PetriSingleDevice:
         if place_name == "LP_done":
             self._token_stats[token.token_id]["exit_system"] = self.time
 
-    def _fire(self, t_idx: int) -> None:
+    def _fire(self, t_idx: int, start_time: int, end_time: int) -> Dict[str, Any]:
         t_name = self.id2t_name[t_idx]
         pre_places = np.flatnonzero(self.pre[:, t_idx] > 0)
         pst_places = np.flatnonzero(self.pst[:, t_idx] > 0)
         if pre_places.size == 0 or pst_places.size == 0:
-            return
+            return {"t_name": t_name, "t1": start_time, "t2": end_time, "token_id": -1}
         pre_place = self.marks[int(pre_places[0])]
         pst_place = self.marks[int(pst_places[0])]
         if len(pre_place.tokens) == 0:
-            return
+            return {"t_name": t_name, "t1": start_time, "t2": end_time, "token_id": -1}
 
         tok = pre_place.pop_head()
+        wafer_id = int(getattr(tok, "token_id", -1))
         self._track_leave(tok, pre_place.name)
         tok.enter_time = self.time
         tok.stay_time = 0
 
         if t_name.startswith("u_"):
-            _, _, dst = t_name.split("_", 2)
+            _, src, dst = t_name.split("_", 2)
             setattr(tok, "_target_place", dst)
+            if src in self._chamber_active and wafer_id in self._chamber_active[src]:
+                idx = self._chamber_active[src].pop(wafer_id)
+                e, _, wid = self._chamber_timeline[src][idx]
+                self._chamber_timeline[src][idx] = (e, start_time, wid)
         elif t_name.startswith("t_"):
             target = t_name[2:]
             if hasattr(tok, "_target_place"):
                 delattr(tok, "_target_place")
-            step_map = {"PM1": 1, "PM3": 2, "PM4": 2, "PM5": 3, "LP_done": 4}
+            step_map = {"PM1": 1, "PM3": 2, "PM4": 2, "LP_done": 3}
             tok.step = max(int(getattr(tok, "step", 0)), step_map.get(target, 0))
             self._track_enter(tok, target)
             if target == "LP_done":
                 self.done_count += 1
                 self._per_wafer_reward += float(self.R_done)
+            elif target in self._chamber_timeline and wafer_id >= 0:
+                idx = len(self._chamber_timeline[target])
+                self._chamber_timeline[target].append((end_time, None, wafer_id))
+                self._chamber_active[target][wafer_id] = idx
 
         pst_place.append(tok)
         self._update_marking_vector()
+        return {
+            "t_name": t_name,
+            "t1": int(start_time),
+            "t2": int(end_time),
+            "token_id": wafer_id,
+        }
 
     def calc_reward(self, t1: int, t2: int, detailed: bool = False):
         dt = max(0, t2 - t1)
@@ -281,6 +349,10 @@ class PetriSingleDevice:
         self.fire_log.clear()
         self._per_wafer_reward = 0.0
         self._token_stats = {}
+        self._idle_penalty_applied = False
+        self._consecutive_wait_time = 0
+        self._chamber_timeline = {"PM1": [], "PM3": [], "PM4": []}
+        self._chamber_active = {"PM1": {}, "PM3": {}, "PM4": {}}
         self._update_marking_vector()
         return None, self.get_enable_t()
 
@@ -308,7 +380,16 @@ class PetriSingleDevice:
             reward_result = self.calc_reward(t1, t2, detailed=detailed_reward)
             self.time = t2
             self._update_stay_times(5)
+            self._consecutive_wait_time += (t2 - t1)
+            if self._consecutive_wait_time >= self.idle_timeout and not self._idle_penalty_applied:
+                self._idle_penalty_applied = True
+                if detailed_reward:
+                    reward_result["idle_timeout_penalty"] = -float(self.idle_penalty)
+                    reward_result["total"] -= float(self.idle_penalty)
+                else:
+                    reward_result -= float(self.idle_penalty)
         else:
+            self._consecutive_wait_time = 0
             enabled = set(self.get_enable_t())
             if action not in enabled:
                 dt = max(1, self.ttime)
@@ -327,8 +408,20 @@ class PetriSingleDevice:
             reward_result = self.calc_reward(t1, t2, detailed=detailed_reward)
             self.time = t2
             self._update_stay_times(self.ttime)
-            self._fire(int(action))
-            self.fire_log.append({"time": self.time, "t_name": self.id2t_name[int(action)]})
+            log_entry = self._fire(int(action), start_time=t1, end_time=t2)
+            self.fire_log.append(log_entry)
+
+            # 在线 release 惩罚通道（两阶段训练第一阶段会关闭 no_release_penalty）
+            if not self.no_release_penalty and self.reward_config.get("release_violation_penalty", 1):
+                latest_idx = len(self.fire_log) - 1
+                blame = self.blame_release_violations()
+                if latest_idx in blame:
+                    pen = float(blame[latest_idx])
+                    if detailed_reward:
+                        reward_result["release_violation_penalty"] = -pen
+                        reward_result["total"] -= pen
+                    else:
+                        reward_result -= pen
 
             if self._per_wafer_reward > 0:
                 if detailed_reward:

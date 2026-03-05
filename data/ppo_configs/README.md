@@ -75,7 +75,7 @@ log, policy = train(env, eval_env, config=config)
 from data.ppo_configs.training_config import PPOTrainingConfig
 
 # 加载配置文件
-config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 
 # 训练
 log, policy = train(env, eval_env, config=config)

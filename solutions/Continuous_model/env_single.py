@@ -14,7 +14,7 @@ from torchrl.envs import EnvBase
 
 from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn_single import PetriSingleDevice
-
+from pathlib import Path
 
 class Env_PN_Single(EnvBase):
     metadata = {"render.modes": ["human", "rgb_array"], "reder_fps": 30}
@@ -32,7 +32,9 @@ class Env_PN_Single(EnvBase):
         self.training_phase = training_phase
         self.detailed_reward = detailed_reward
 
-        config = PetriEnvConfig(training_phase=training_phase)
+        dir = Path(__file__).parents[2] / "data" / "petri_configs"
+        path = dir / "single.json"
+        config = PetriEnvConfig().load(path=path)
         if reward_config:
             config.reward_config.update(reward_config)
 
@@ -45,7 +47,7 @@ class Env_PN_Single(EnvBase):
         self.set_seed(seed)
 
     def _make_spec(self):
-        obs_dim = 12 * 6
+        obs_dim = 7 * 6
         self.observation_spec = Composite(
             observation=Unbounded(shape=(obs_dim,), dtype=torch.int64, device=self.device),
             action_mask=Binary(n=self.n_actions, dtype=torch.bool),
@@ -71,10 +73,10 @@ class Env_PN_Single(EnvBase):
         )
 
     def _build_obs(self):
-        max_wafers = 12
+        max_wafers = 7
         wafers = []
         for p_idx, place in enumerate(self.net.marks):
-            if place.name in {"PM2", "PM6"}:
+            if place.name in {"PM2", "PM5", "PM6"}:
                 continue
             for tok in place.tokens:
                 if tok.token_id < 0:

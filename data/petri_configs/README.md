@@ -98,7 +98,7 @@ from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn import Petri
 
 # 加载配置文件
-config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 # 使用配置创建环境
 net = Petri(config=config)
@@ -147,7 +147,7 @@ from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn import Petri
 
 # 加载阶段1配置
-config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 # 创建环境
 net = Petri(config=config)
@@ -245,7 +245,7 @@ from data.petri_configs.env_config import PetriEnvConfig
 from solutions.PPO.enviroment import Env_PN
 
 # 创建环境配置
-petri_config = PetriEnvConfig.load("data/petri_configs/phase1_config.json")
+petri_config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 # 创建训练环境（需要修改Env_PN以接受petri_config）
 env = Env_PN(device="cpu", petri_config=petri_config)

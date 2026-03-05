@@ -50,7 +50,7 @@ def example_3_load_from_file():
     print("=" * 60)
     
     # 加载阶段1配置
-    config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+    config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
     print(config)
     
     # 可以在加载后修改部分参数
@@ -82,7 +82,7 @@ def example_5_two_phase_training():
     print("=" * 60)
     
     # 阶段1：仅报废惩罚
-    config_phase1 = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+    config_phase1 = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
     print("阶段1配置:")
     print(config_phase1)
     

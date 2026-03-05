@@ -133,7 +133,7 @@ python solutions/PPO/run_ppo.py \
 例如：
 ```bash
 python solutions/PPO/run_ppo.py \
-    --config data/ppo_configs/phase1_config.json \
+    --config data/ppo_configs/s_trains_train.json \
     --phase 2 \
     --device cuda
 ```
@@ -194,7 +194,7 @@ config.save("data/ppo_configs/my_custom_config.json")
 
 ```python
 # 加载配置
-config = PPOTrainingConfig.load("data/ppo_configs/phase1_config.json")
+config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 
 # 修改参数
 config.total_batch = 300

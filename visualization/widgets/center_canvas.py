@@ -128,14 +128,15 @@ class CenterCanvas(QGraphicsView):
     @staticmethod
     def _clone_chamber_state(display_name: str, source: ChamberState | None) -> ChamberState:
         if source is None:
+            is_disabled_placeholder = display_name in {"PM5"}
             return ChamberState(
                 name=display_name,
                 place_idx=-1,
                 capacity=1,
                 wafers=[],
                 proc_time=0.0,
-                status="idle",
-                chamber_type="processing",
+                status="disabled" if is_disabled_placeholder else "idle",
+                chamber_type="disabled" if is_disabled_placeholder else "processing",
             )
         return ChamberState(
             name=display_name,
