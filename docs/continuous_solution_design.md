@@ -104,6 +104,8 @@ flowchart TB
 - `t_*` 使能在 `d_TM1` 侧额外受 `pre_color[:,:,where]` 限制：只有当前 `where` 对应颜色截面允许的目标才可放行。
 - 每次晶圆被变迁移动后执行 `where += 1`，用于推进 color 截面判定。
 - 双臂模式下（`single_robot_capacity=2`），只要 `d_TM1` 队首有晶圆，后续 `u_*` 仅允许来自该队首晶圆 `dst` 层的来源；不再依赖“dst 层是否已满”触发。
+- 单设备清洗（训练简化版）默认仅作用于 `PM3/PM4`：单腔累计处理 2 片后进入 150s 清洗态；清洗期间目标 `t_*` 在 Stage2 禁用（不参与 Stage1 死锁判定），并记录 `fire_log` 清洗事件（`cleaning_start/cleaning_end`）。
+- 单设备观测向量在原 `7*6` wafer 特征后追加 3 维（`PM1/PM3/PM4` 的 `processed_wafer_count`），用于策略感知清洗触发临界。
 
 ### Impact
 - 原双机械手并发训练和可视化入口保持兼容。

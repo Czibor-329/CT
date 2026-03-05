@@ -101,6 +101,11 @@ class BasedToken:
 - 通过 `PetriEnvConfig.single_robot_capacity` 控制 `d_TM1` 容量：
   - `1`：Single Arm（单臂）
   - `2`：Dual Arm（双臂）
+- 单设备清洗配置（当前训练简化版）：
+  - `single_cleaning_enabled=true`
+  - `single_cleaning_targets=["PM3","PM4"]`
+  - `single_cleaning_trigger_wafers=2`
+  - `single_cleaning_duration=150`
 
 **工艺路线**
 - `LP -> PM1(100s) -> PM3(300s) -> LP_done`
@@ -117,6 +122,7 @@ class BasedToken:
 - `blame_release_violations() -> Dict[int, float]`：基于 `_chamber_timeline` 的单设备事后追责，输出 `fire_log_index -> penalty`
   - 追责站点统一命名：`s1=PM1`，`s2=PM3∪PM4`（合并时间线与容量池）
   - `u_LP` 链路按 `s1 -> s2` 判定，`s2` 容量取 `cap(PM3)+cap(PM4)`，避免“实际走 PM4 却被 PM3 时间线误罚”
+- 清洗事件日志会附加写入 `fire_log`（`event_type=cleaning_start|cleaning_end`），用于后续追责/复盘。
 - `calc_wafer_statistics()`：返回统计字典（供可视化左栏读取）
 
 **两阶段训练相关字段**
@@ -131,9 +137,13 @@ class BasedToken:
 - 当 `d_TM1` 非空且队首晶圆在“取片时”其 `dst` 层已满：仅允许继续取出该 `dst` 层中的晶圆，禁止取其它位置晶圆。
 - `t_*` 始终遵循 FIFO 队首目标约束（队首 `_target_place`）与 `d_TM1` dwell 时间约束。
 - 使能计算分为两阶段：
-  - Stage1：`pre/pst` + 容量 + 防死锁规则（用于死锁判定）
-  - Stage2：加工完成与 dwell 就绪过滤（`get_enable_t()` 最终返回）
+  - Stage1：`pre/pst` + 容量 + 防死锁规则（用于死锁判定，`u_*` 在该阶段忽略清洗目标过滤）
+  - Stage2：加工完成、目标可达与 dwell/清洗过滤（`get_enable_t()` 最终返回）
+- 当 `t_*` 的目标腔室处于 `is_cleaning=True` 时，Stage2 才禁用该变迁（死锁判定仍基于未清洗过滤的 Stage1）。
 - 死锁定义：`LP_done` 未完成且 Stage1 无任何使能变迁。
+
+**观测补充（单设备）**
+- `Env_PN_Single` 在原 `7*6` wafer 特征后追加 3 维：`PM1/PM3/PM4` 的 `processed_wafer_count`，用于让策略感知清洗触发临界状态。
 
 **运输位 token 的机械臂标识**
 - 每个 token 在进入 `d_TM1`（即 `u_*` 发射）时分配 `machine` 字段。

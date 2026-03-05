@@ -60,7 +60,8 @@ class CenterCanvas(QGraphicsView):
         for display_name, item in self.chambers.items():
             source_name = self._display_to_state.get(display_name, display_name)
             source = state_chambers.get(source_name)
-            item.update_state(self._clone_chamber_state(display_name, source))
+            chamber_state = self._clone_chamber_state(display_name, source)
+            item.update_state(chamber_state)
 
         for name, item in self.robots.items():
             source_name = self._robot_display_to_state.get(name, name)
@@ -186,6 +187,8 @@ class CenterCanvas(QGraphicsView):
             proc_time=source.proc_time,
             status=source.status,
             chamber_type=source.chamber_type,
+            cleaning_remaining=source.cleaning_remaining,
+            inbound_blocked=source.inbound_blocked,
         )
 
     def _center_of_chambers(self, positions: dict, names: list, cw: float, ch: float) -> tuple[float, float]:

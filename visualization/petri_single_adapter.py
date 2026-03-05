@@ -155,6 +155,10 @@ class PetriSingleAdapter(AlgorithmAdapter):
 
             chamber_type = "disabled" if place.name in self.disabled_chambers else "processing"
             status = self._calc_status(place.name, wafers, chamber_type)
+            is_cleaning = bool(getattr(place, "is_cleaning", False))
+            cleaning_remaining = float(getattr(place, "cleaning_remaining", 0.0))
+            if is_cleaning:
+                status = "cleaning"
             chambers.append(
                 ChamberState(
                     name=place.name,
@@ -164,6 +168,8 @@ class PetriSingleAdapter(AlgorithmAdapter):
                     proc_time=float(place.processing_time),
                     status=status,
                     chamber_type=chamber_type,
+                    cleaning_remaining=cleaning_remaining,
+                    inbound_blocked=is_cleaning,
                 )
             )
 
@@ -213,6 +219,7 @@ class PetriSingleAdapter(AlgorithmAdapter):
                 "transports_detail": stats.get("transports_detail", {}),
                 "resident_violation_count": stats.get("resident_violation_count", 0),
                 "qtime_violation_count": stats.get("qtime_violation_count", 0),
+                "chamber_processed_counts": stats.get("chamber_processed_counts", {}),
             },
         )
 

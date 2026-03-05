@@ -62,6 +62,13 @@ class Place:
     tokens: Deque[BasedToken] = field(default_factory=deque)
     # 上次分配的机器编号（仅 type=1 使用），用于轮换分配机器
     last_machine: int = -1
+    # 清洗相关状态（默认关闭，供单设备扩展使用）
+    processed_wafer_count: int = 0
+    idle_time: int = 0
+    last_proc_type: str = ""
+    is_cleaning: bool = False
+    cleaning_remaining: int = 0
+    cleaning_reason: str = ""
 
     def clone(self) -> "Place":
         cloned = Place(
@@ -70,6 +77,12 @@ class Place:
             processing_time=self.processing_time,
             type=self.type,
             last_machine=self.last_machine,
+            processed_wafer_count=self.processed_wafer_count,
+            idle_time=self.idle_time,
+            last_proc_type=self.last_proc_type,
+            is_cleaning=self.is_cleaning,
+            cleaning_remaining=self.cleaning_remaining,
+            cleaning_reason=self.cleaning_reason,
         )
         cloned.tokens = deque(tok.clone() for tok in self.tokens)
         return cloned

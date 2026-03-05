@@ -49,7 +49,8 @@ class Env_PN_Single(EnvBase):
         self.set_seed(seed)
 
     def _make_spec(self):
-        obs_dim = 7 * 6
+        chamber_count_dim = 3  # PM1, PM3, PM4 的已处理晶圆计数
+        obs_dim = 7 * 6 + chamber_count_dim
         self.observation_spec = Composite(
             observation=Unbounded(shape=(obs_dim,), dtype=torch.int64, device=self.device),
             action_mask=Binary(n=self.n_actions, dtype=torch.bool),
@@ -100,6 +101,11 @@ class Env_PN_Single(EnvBase):
                 obs.extend(wafers[i])
             else:
                 obs.extend([0, 0, 0, 0, 0, 0])
+        chamber_counts = []
+        for chamber_name in ("PM1", "PM3", "PM4"):
+            place = self.net._get_place(chamber_name)
+            chamber_counts.append(int(getattr(place, "processed_wafer_count", 0)))
+        obs.extend(chamber_counts)
         return np.array(obs, dtype=np.int64)
 
     def _mask(self):

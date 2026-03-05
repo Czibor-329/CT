@@ -59,8 +59,13 @@ class ChamberItem(QGraphicsItem):
         is_idle = self.chamber.status == "idle"
         is_active = self.chamber.status == "active"
         is_disabled = self.chamber.status == "disabled"
+        is_cleaning = self.chamber.status == "cleaning"
         
-        if is_disabled:
+        if is_cleaning:
+            bg = self.theme.bg_surface
+            border = self.theme.warning
+            grid_alpha = 70
+        elif is_disabled:
             bg = self.theme.bg_deepest
             border = self.theme.border_muted
             grid_alpha = 20
@@ -133,6 +138,23 @@ class ChamberItem(QGraphicsItem):
 
 
 
+        # 清洁态覆盖层：显示 CLEAN xx 与禁入提示
+        if is_cleaning:
+            remaining = max(0, int(round(float(getattr(self.chamber, "cleaning_remaining", 0.0)))))
+            main_font = QFont(p.font_family, p.wafer_font_pt + 2, QFont.Weight.Bold)
+            sub_font = QFont(p.font_family, p.wafer_id_font_pt, QFont.Weight.DemiBold)
+
+            painter.setPen(self.theme.qcolor(self.theme.warning))
+            painter.setFont(main_font)
+            painter.drawText(
+                rect.adjusted(0, 8, 0, -20),
+                Qt.AlignmentFlag.AlignCenter,
+                f"CLEAN {remaining}",
+            )
+
+            self.wafer_item.setVisible(False)
+            return
+
         # 更新晶圆状态
         if self.chamber.wafers:
             self.wafer_item.set_wafer(self.chamber.wafers[0])
@@ -159,6 +181,8 @@ class ChamberItem(QGraphicsItem):
             return self.theme.success
         if self.chamber.status == "disabled":
             return self.theme.text_muted
+        if self.chamber.status == "cleaning":
+            return self.theme.warning
         return self.theme.text_muted
 
 

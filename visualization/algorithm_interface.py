@@ -41,6 +41,8 @@ class ChamberState:
     proc_time: float = 0.0
     status: str = "idle"  # "idle", "active", "warning", "danger"
     chamber_type: str = "processing"  # "processing", "transport", "start", "end"
+    cleaning_remaining: float = 0.0  # 清洁剩余秒数（仅可视化层）
+    inbound_blocked: bool = False    # 清洁期间禁入提示（仅可视化层）
 
 
 @dataclass

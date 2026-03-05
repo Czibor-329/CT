@@ -91,6 +91,11 @@ class PetriMainWindow(QMainWindow):
         self._robot_capacity = 1
         self._wafer_count_route1: int | None = None
         self._wafer_count_route2: int | None = None
+        self._cleaning_options: dict[str, bool] = {
+            "idle_80": False,
+            "switch_process": False,
+            "pm_5_wafers": False,
+        }
         self._model_path_override: Path | None = None
         self._model_apply_callback = None
         self._action_sequence_path = Path("solutions/Td_petri/planB_sequence.json")
@@ -202,6 +207,16 @@ class PetriMainWindow(QMainWindow):
         self._action_config_wafer.triggered.connect(self._set_wafer_count)
         self._action_arm_single.triggered.connect(lambda: self._set_robot_capacity(1))
         self._action_arm_dual.triggered.connect(lambda: self._set_robot_capacity(2))
+        cleaning_menu = config_menu.addMenu("清洁")
+        self._action_clean_idle_80 = QAction("闲置时间超过80s (清洗时间30s)", self, checkable=True)
+        self._action_clean_switch = QAction("工艺切换 (清洗时间200s)", self, checkable=True)
+        self._action_clean_pm5 = QAction("PM加工5片晶圆 (清洗时间300s)", self, checkable=True)
+        cleaning_menu.addAction(self._action_clean_idle_80)
+        cleaning_menu.addAction(self._action_clean_switch)
+        cleaning_menu.addAction(self._action_clean_pm5)
+        self._action_clean_idle_80.toggled.connect(lambda checked: self._on_cleaning_option_toggled("idle_80", checked))
+        self._action_clean_switch.toggled.connect(lambda checked: self._on_cleaning_option_toggled("switch_process", checked))
+        self._action_clean_pm5.toggled.connect(lambda checked: self._on_cleaning_option_toggled("pm_5_wafers", checked))
 
         # 回放菜单（动作序列 JSON）
         replay_menu = menu_bar.addMenu("回放")
@@ -335,9 +350,23 @@ class PetriMainWindow(QMainWindow):
         arm_mode_text = "Dual Arm" if self._robot_capacity == 2 else "Single Arm"
         model_text = str(self._model_path_override) if self._model_path_override else "未选择"
         seq_text = str(self._action_sequence_path)
+        clean_labels = []
+        if self._cleaning_options["idle_80"]:
+            clean_labels.append("idle80/30s")
+        if self._cleaning_options["switch_process"]:
+            clean_labels.append("switch/200s")
+        if self._cleaning_options["pm_5_wafers"]:
+            clean_labels.append("pm5/300s")
+        clean_text = ",".join(clean_labels) if clean_labels else "关闭"
         self.statusBar().showMessage(
-            f"设备: {mode_text} | 机械手模式: {arm_mode_text} | 晶圆数量: {wafers_text}（仅UI占位） | 模型: {model_text} | 动作序列: {seq_text}"
+            f"设备: {mode_text} | 机械手模式: {arm_mode_text} | 晶圆数量: {wafers_text}（仅UI占位） | 清洁: {clean_text} | 模型: {model_text} | 动作序列: {seq_text}"
         )
+
+    def _on_cleaning_option_toggled(self, key: str, checked: bool) -> None:
+        if key not in self._cleaning_options:
+            return
+        self._cleaning_options[key] = bool(checked)
+        self._refresh_status_message()
 
     def _connect_signals(self) -> None:
         self.viewmodel.state_updated.connect(self._on_state_updated)

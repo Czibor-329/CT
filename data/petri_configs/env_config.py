@@ -77,7 +77,12 @@ class PetriEnvConfig:
     cache_indices: bool = False
     optimize_data_structures: bool = False
     turbo_mode: bool = False
-    single_robot_capacity: int = 1
+    single_robot_capacity: int = 1 # 单设备机械手容量（默认为1，训练简化版可设置为2或更高以加快训练）
+    # 单设备清洗配置（训练简化版）
+    single_cleaning_enabled: bool = True
+    single_cleaning_targets: List[str] = field(default_factory=lambda: ["PM3", "PM4"])
+    single_cleaning_trigger_wafers: int = 2
+    single_cleaning_duration: int = 150
 
     # 路线与晶圆分配（可选；无则用默认双路线）
     n_wafer_route1: Optional[int] = None
