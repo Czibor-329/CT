@@ -670,6 +670,17 @@ class PetriSingleDevice:
                 progress = min(dt, remain)
                 parts["proc_reward"] += self.processing_reward_coef * float(progress)
 
+        # 与 pn.py 对齐：运输位(type=2, 单设备主要是 d_TM1)超过 D_Residual_time 后按超时秒数惩罚
+        if self.reward_config.get("transport_penalty", 1):
+            for p in self.marks:
+                if p.type != 2 or len(p.tokens) == 0:
+                    continue
+                for tok in p.tokens:
+                    deadline = int(tok.enter_time) + int(self.D_Residual_time)
+                    over_start = max(int(t1), deadline)
+                    if int(t2) > over_start:
+                        parts["penalty"] -= float(int(t2) - over_start) * float(self.transport_overtime_coef)
+
         for p in self.marks:
             if p.type != 1 or len(p.tokens) == 0:
                 continue

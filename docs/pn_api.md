@@ -154,6 +154,7 @@ class BasedToken:
 **停滞惩罚（单设备已接入）**
 - 沿用 `pn.py` 思路：累计连续 WAIT 时间（`_consecutive_wait_time`）
 - 当累计时间达到 `idle_timeout = max(processing_time)+30` 且未触发过时，施加一次 `idle_timeout_penalty`
+- 运输位超时惩罚：`d_TM1`（type=2）内晶圆停留超过 `D_Residual_time` 后按超时秒数线性扣分，受 `reward_config["transport_penalty"]` 控制，系数为 `transport_overtime_coef`
 
 **死锁终止语义（单设备）**
 - 发生死锁时，episode 终止，增加 `deadlock_count`。
