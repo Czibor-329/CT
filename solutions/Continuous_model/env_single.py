@@ -19,6 +19,8 @@ from pathlib import Path
 class Env_PN_Single(EnvBase):
     metadata = {"render.modes": ["human", "rgb_array"], "reder_fps": 30}
     batch_locked = False
+    MAX_WAFERS = 7
+    WAFER_FEAT_DIM = 5
 
     def __init__(
         self,
@@ -50,7 +52,7 @@ class Env_PN_Single(EnvBase):
 
     def _make_spec(self):
         chamber_count_dim = 3  # PM1, PM3, PM4 的已处理晶圆计数
-        obs_dim = 7 * 6 + chamber_count_dim
+        obs_dim = int(self.MAX_WAFERS) * int(self.WAFER_FEAT_DIM) + int(chamber_count_dim)
         self.observation_spec = Composite(
             observation=Unbounded(shape=(obs_dim,), dtype=torch.int64, device=self.device),
             action_mask=Binary(n=self.n_actions, dtype=torch.bool),
@@ -77,7 +79,8 @@ class Env_PN_Single(EnvBase):
         )
 
     def _build_obs(self):
-        max_wafers = 7
+        max_wafers = int(self.MAX_WAFERS)
+        wafer_feat_dim = int(self.WAFER_FEAT_DIM)
         wafers = []
         for p_idx, place in enumerate(self.net.marks):
             if place.name in {"PM2", "PM5", "PM6"}:
@@ -93,14 +96,14 @@ class Env_PN_Single(EnvBase):
                     time_to_scrap = int(getattr(self.net, "D_Residual_time", 0)) - stay_time
                 else:
                     time_to_scrap = -1
-                wafers.append((tok.token_id, p_idx, place_type, stay_time, int(time_to_scrap), 0))
+                wafers.append((tok.token_id, tok.where, stay_time, int(time_to_scrap), 0))
         wafers.sort(key=lambda x: x[0])
         obs = []
         for i in range(max_wafers):
             if i < len(wafers):
                 obs.extend(wafers[i])
             else:
-                obs.extend([0, 0, 0, 0, 0, 0])
+                obs.extend([0] * wafer_feat_dim)
         chamber_counts = []
         for chamber_name in ("PM1", "PM3", "PM4"):
             place = self.net._get_place(chamber_name)
