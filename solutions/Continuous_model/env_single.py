@@ -30,6 +30,10 @@ class Env_PN_Single(EnvBase):
         training_phase: int = 2,
         reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
+        proc_time_rand_enabled: Optional[bool] = None,
+        proc_time_rand_scale_map: Optional[Dict[str, Dict[str, float]]] = None,
+        proc_time_rand_min_scale: Optional[float] = None,
+        proc_time_rand_max_scale: Optional[float] = None,
     ):
         super().__init__(device=device)
         self.training_phase = training_phase
@@ -41,6 +45,17 @@ class Env_PN_Single(EnvBase):
         if reward_config:
             config.reward_config.update(reward_config)
         config.single_robot_capacity = 2 if int(robot_capacity) == 2 else 1
+        if proc_time_rand_enabled is not None:
+            config.single_proc_time_rand_enabled = bool(proc_time_rand_enabled)
+        if proc_time_rand_scale_map is not None:
+            config.single_proc_time_rand_scale_map = {
+                str(chamber): {"min": float(bounds.get("min", 1.0)), "max": float(bounds.get("max", 1.0))}
+                for chamber, bounds in dict(proc_time_rand_scale_map).items()
+            }
+        if proc_time_rand_min_scale is not None:
+            config.single_proc_time_rand_min_scale = float(proc_time_rand_min_scale)
+        if proc_time_rand_max_scale is not None:
+            config.single_proc_time_rand_max_scale = float(proc_time_rand_max_scale)
 
         self.net = PetriSingleDevice(config=config)
         self.n_actions = self.net.T + 1  # 最后一个是 WAIT
@@ -235,3 +250,119 @@ class Env_PN_Single(EnvBase):
     def _set_seed(self, seed: int | None):
         rng = torch.manual_seed(seed)
         self.rng = rng
+
+
+class Env_PN_Single_PlaceObs(Env_PN_Single):
+    metadata = {"render.modes": ["human", "rgb_array"], "reder_fps": 30}
+    batch_locked = False
+    SCRAP_CLIP_THRESHOLD = 20.0
+
+    def _make_spec(self):
+        # LP(1) + TM(4) + PM1/PM3/PM4(各9)
+        obs_dim = 1 + 4 + 9 * 3
+        self.observation_spec = Composite(
+            observation=Unbounded(shape=(obs_dim,), dtype=torch.float32, device=self.device),
+            action_mask=Binary(n=self.n_actions, dtype=torch.bool),
+            time=Unbounded(shape=(1,), dtype=torch.int64, device=self.device),
+            shape=(),
+        )
+        self.action_spec = Categorical(n=self.n_actions, shape=(1,), dtype=torch.int64)
+        self.reward_spec = Unbounded(shape=(1,), dtype=torch.float32)
+        self.state_spec = Composite(shape=())
+        self.done_spec = Composite(
+            terminated=Unbounded(shape=(1,), dtype=torch.bool),
+            finish=Unbounded(shape=(1,), dtype=torch.bool),
+            scrap=Unbounded(shape=(1,), dtype=torch.bool),
+            deadlock=Unbounded(shape=(1,), dtype=torch.bool),
+        )
+
+    def _extract_place_features(self, place_name: str) -> List[float]:
+        net_place_name = "d_TM1" if place_name == "TM" else place_name
+        place = self.net._get_place(net_place_name)
+        if place_name == "LP":
+            remaining = float(len(place.tokens))
+            denom = max(1.0, float(self.n_wafer))
+            remaining_norm = float(np.clip(remaining / denom, 0.0, 1.0))
+            return [remaining_norm]
+        if place_name == "TM":
+            return self._extract_tm_features(place)
+        if place_name in {"PM1", "PM3", "PM4"}:
+            return self._extract_pm_features(place)
+        return []
+
+    def _extract_tm_features(self, place) -> List[float]:
+        has_wafer = len(place.tokens) > 0
+        dwell_time = max(1.0, float(getattr(place, "processing_time", self.net.T_transport)))
+        penalty_time = max(1.0, float(getattr(self.net, "D_Residual_time", 10)))
+
+        if not has_wafer:
+            return [0.0, 0.0, 0.0, 1.0]
+
+        stay_time = float(getattr(place.head(), "stay_time", 0))
+        transport_complete = 1.0 if stay_time >= dwell_time else 0.0
+        wafer_stay_over_long = 1.0 if stay_time > penalty_time else 0.0
+
+        tm_norm_denom = max(dwell_time, penalty_time) * 2.0
+        wafer_stay_time_norm = float(np.clip(stay_time / tm_norm_denom, 0.0, 1.0))
+        distance_to_penalty = max(0.0, penalty_time - stay_time)
+        distance_to_penalty_norm = float(np.clip(distance_to_penalty / penalty_time, 0.0, 1.0))
+        return [
+            transport_complete,
+            wafer_stay_over_long,
+            wafer_stay_time_norm,
+            distance_to_penalty_norm,
+        ]
+
+    def _extract_pm_features(self, place) -> List[float]:
+        has_wafer = len(place.tokens) > 0
+        proc_time = max(1.0, float(getattr(place, "processing_time", 0)))
+        p_residual = max(1.0, float(getattr(self.net, "P_Residual_time", 15)))
+        clean_duration = max(1.0, float(getattr(self.net, "single_cleaning_duration", 150)))
+        clean_trigger_runs = max(1.0, float(getattr(self.net, "single_cleaning_trigger_wafers", 2)))
+
+        occupied = 1.0 if has_wafer else 0.0
+        processing = 0.0
+        done_waiting_pick = 0.0
+        remaining_process_time_norm = 0.0
+        wafer_stay_time_norm = 0.0
+        wafer_time_to_scrap_norm = 0.0
+
+        if has_wafer:
+            stay_time = float(getattr(place.head(), "stay_time", 0))
+            processing = 1.0 if stay_time < proc_time else 0.0
+            done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
+            remaining_proc = max(0.0, proc_time - stay_time)
+            remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
+            wafer_stay_time_norm = float(np.clip(stay_time / proc_time, 0.0, 1.0))
+            time_to_scrap = max(0.0, proc_time + p_residual - stay_time)
+            wafer_time_to_scrap_norm = float(
+                np.clip(time_to_scrap, 0.0, self.SCRAP_CLIP_THRESHOLD) / self.SCRAP_CLIP_THRESHOLD
+            )
+
+        is_cleaning = 1.0 if bool(getattr(place, "is_cleaning", False)) else 0.0
+        clean_remaining = max(0.0, float(getattr(place, "cleaning_remaining", 0)))
+        clean_remaining_time_norm = float(np.clip(clean_remaining / clean_duration, 0.0, 1.0))
+
+        processed_count = max(0.0, float(getattr(place, "processed_wafer_count", 0)))
+        remaining_runs = max(0.0, clean_trigger_runs - processed_count)
+        remaining_runs_before_clean_norm = float(np.clip(remaining_runs / clean_trigger_runs, 0.0, 1.0))
+
+        return [
+            occupied,
+            processing,
+            done_waiting_pick,
+            remaining_process_time_norm,
+            wafer_stay_time_norm,
+            wafer_time_to_scrap_norm,
+            is_cleaning,
+            clean_remaining_time_norm,
+            remaining_runs_before_clean_norm,
+        ]
+
+    def _build_obs(self):
+        obs: List[float] = []
+        obs.extend(self._extract_place_features("LP"))
+        obs.extend(self._extract_place_features("TM"))
+        for pm_name in ("PM1", "PM3", "PM4"):
+            obs.extend(self._extract_place_features(pm_name))
+        return np.array(obs, dtype=np.float32)

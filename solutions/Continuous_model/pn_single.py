@@ -17,7 +17,7 @@ from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
-MAX_TIME = 6000
+MAX_TIME = 8000
 
 
 class PetriSingleDevice:
@@ -52,11 +52,24 @@ class PetriSingleDevice:
         self.single_cleaning_trigger_wafers = max(1, int(getattr(config, "single_cleaning_trigger_wafers", 2)))
         self.single_cleaning_duration = max(0, int(getattr(config, "single_cleaning_duration", 150)))
         self.single_u_lp_boundary_enabled = bool(getattr(config, "single_u_lp_boundary_enabled", True))
+        self._single_process_chambers: Tuple[str, ...] = ("PM1", "PM3", "PM4")
+        self.single_proc_time_rand_enabled = bool(getattr(config, "single_proc_time_rand_enabled", False))
+        self.single_proc_time_rand_min_scale = float(getattr(config, "single_proc_time_rand_min_scale", 1.0))
+        self.single_proc_time_rand_max_scale = float(getattr(config, "single_proc_time_rand_max_scale", 1.0))
+        self._single_proc_time_rand_scale_map_raw = dict(
+            getattr(config, "single_proc_time_rand_scale_map", {}) or {}
+        )
+        self._sanitize_default_random_scales()
+        self._single_proc_time_rand_scale_map = self._build_chamber_random_scale_map()
+        raw_process_time_map = dict(getattr(config, "single_process_time_map", {}) or {})
+        self._base_process_time_map = self._preprocess_process_time_map(raw_process_time_map)
+        self._episode_process_time_map = dict(self._base_process_time_map)
 
         info = build_single_device_net(
             n_wafer=self.n_wafer,
             ttime=max(1, self.T_transport),
             robot_capacity=self.robot_capacity,
+            process_time_map=self._base_process_time_map,
         )
         self.pre: np.ndarray = info["pre"]
         self.pre_color: np.ndarray = info.get("pre_color", self.pre[:, :, None])
@@ -82,6 +95,7 @@ class PetriSingleDevice:
 
         self.ori_marks: List[Place] = info["marks"]
         self.marks: List[Place] = self._clone_marks(self.ori_marks)
+        self._apply_episode_process_time_map()
 
         self.time = 0
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
@@ -102,6 +116,74 @@ class PetriSingleDevice:
         self._chamber_timeline: Dict[str, list] = {"PM1": [], "PM3": [], "PM4": []}
         self._chamber_active: Dict[str, Dict[int, int]] = {"PM1": {}, "PM3": {}, "PM4": {}}
         self._init_single_cleaning_state()
+
+    @staticmethod
+    def _round_to_nearest_five(value: float) -> int:
+        rounded = int(round(float(value) / 5.0) * 5)
+        return max(5, rounded)
+
+    def _sanitize_default_random_scales(self) -> None:
+        min_scale = float(self.single_proc_time_rand_min_scale)
+        max_scale = float(self.single_proc_time_rand_max_scale)
+        if min_scale <= 0:
+            min_scale = 1.0
+        if max_scale <= 0:
+            max_scale = 1.0
+        if min_scale > max_scale:
+            min_scale, max_scale = max_scale, min_scale
+        self.single_proc_time_rand_min_scale = min_scale
+        self.single_proc_time_rand_max_scale = max_scale
+
+    def _sanitize_scale_pair(self, min_scale: float, max_scale: float) -> Tuple[float, float]:
+        low = float(min_scale)
+        high = float(max_scale)
+        if low <= 0:
+            low = 1.0
+        if high <= 0:
+            high = 1.0
+        if low > high:
+            low, high = high, low
+        return low, high
+
+    def _build_chamber_random_scale_map(self) -> Dict[str, Tuple[float, float]]:
+        chamber_map: Dict[str, Tuple[float, float]] = {}
+        default_low = float(self.single_proc_time_rand_min_scale)
+        default_high = float(self.single_proc_time_rand_max_scale)
+        for chamber in self._single_process_chambers:
+            raw = self._single_proc_time_rand_scale_map_raw.get(chamber, {})
+            if not isinstance(raw, dict):
+                raw = {}
+            low = raw.get("min", default_low)
+            high = raw.get("max", default_high)
+            chamber_map[chamber] = self._sanitize_scale_pair(low, high)
+        return chamber_map
+
+    def _preprocess_process_time_map(self, process_time_map: Dict[str, int]) -> Dict[str, int]:
+        defaults = {"PM1": 100, "PM3": 300, "PM4": 300}
+        processed: Dict[str, int] = {}
+        for chamber in self._single_process_chambers:
+            raw_value = process_time_map.get(chamber, defaults[chamber])
+            processed[chamber] = self._round_to_nearest_five(raw_value)
+        return processed
+
+    def _build_episode_process_time_map(self) -> Dict[str, int]:
+        if not self.single_proc_time_rand_enabled:
+            return dict(self._base_process_time_map)
+        sampled: Dict[str, int] = {}
+        for chamber in self._single_process_chambers:
+            low, high = self._single_proc_time_rand_scale_map[chamber]
+            base_time = float(self._base_process_time_map[chamber])
+            sampled_time = base_time * float(np.random.uniform(low, high))
+            sampled[chamber] = self._round_to_nearest_five(sampled_time)
+        return sampled
+
+    def _apply_episode_process_time_map(self) -> None:
+        for p in self.marks:
+            if p.name in self._episode_process_time_map:
+                p.processing_time = int(self._episode_process_time_map[p.name])
+        for chamber_name, proc_time in self._episode_process_time_map.items():
+            p_idx = self._get_place_index(chamber_name)
+            self.ptime[p_idx] = int(proc_time)
 
     @staticmethod
     def _clone_marks(marks: List[Place]) -> List[Place]:
@@ -798,6 +880,8 @@ class PetriSingleDevice:
 
     def reset(self):
         self.marks = self._clone_marks(self.ori_marks)
+        self._episode_process_time_map = self._build_episode_process_time_map()
+        self._apply_episode_process_time_map()
         self.time = 0
         self.done_count = 0
         self.scrap_count = 0
@@ -814,6 +898,7 @@ class PetriSingleDevice:
         self._chamber_timeline = {"PM1": [], "PM3": [], "PM4": []}
         self._chamber_active = {"PM1": {}, "PM3": {}, "PM4": {}}
         self._init_single_cleaning_state()
+        self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self._update_marking_vector()
         return None, self.get_enable_t()
 

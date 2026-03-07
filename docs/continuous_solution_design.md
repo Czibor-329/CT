@@ -95,6 +95,8 @@ flowchart TB
 
 ### Behavior
 - 工艺路线：`LP -> PM1(100s) -> [PM3|PM4](300s) -> LP_done`
+- 单设备工序时长支持配置：`single_process_time_map = {PM1, PM3, PM4}`；输入值会先预处理为最接近的 5 的倍数（最小 5）。
+- 单设备训练支持 episode 级工序时长随机扰动：`single_proc_time_rand_enabled` + `single_proc_time_rand_scale_map`（`PM1/PM3/PM4` 各自 `min/max`）；每个 episode 采样一次并固定整局生效。未配置单腔室时回退到统一 `single_proc_time_rand_min_scale/max_scale`。
 - `PM2/PM6` 仅用于界面占位展示，动作不可达；`PM5` 作为 UI 占位显示，不参与模型工艺流转。
 - 执行链：`construct_single` 构网 -> `_get_enable_t` -> `step` -> `calc_reward`
 - 使能动作接口：`List[int]`（单机械手语义）
@@ -114,6 +116,7 @@ flowchart TB
 - 原双机械手并发训练和可视化入口保持兼容。
 - 单设备逻辑集中在 `Continuous_model` 新文件中，便于后续独立迭代。
 - 单设备训练已支持两阶段：阶段1收集轨迹（关闭在线 release 惩罚），阶段2执行 `blame_release_violations` 回填奖励。
+- 训练入口 `train_single.py` 仅保留随机开关参数：`--proc-time-rand-enabled`。开启后按配置中的随机区间执行（不再提供 CLI 最小/最大覆盖）。
 - 单设备训练权重保存格式与并发训练统一：保存 `policy_module.state_dict()`（不再仅保存 backbone）。
 - 单设备动作 ID 与旧版 `u_src_dst` 不再一一对应；历史动作序列与旧策略权重需重训或显式映射迁移。
 

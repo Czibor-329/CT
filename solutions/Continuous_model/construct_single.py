@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -20,19 +20,28 @@ class SingleModuleSpec:
     capacity: int = 1
 
 
-def build_single_device_net(n_wafer: int, ttime: int = 5, robot_capacity: int = 1) -> Dict[str, object]:
+def build_single_device_net(
+    n_wafer: int,
+    ttime: int = 5,
+    robot_capacity: int = 1,
+    process_time_map: Optional[Dict[str, int]] = None,
+) -> Dict[str, object]:
     """
     构建单设备 Petri 网结构：
     LP -> PM1 -> [PM3, PM4] -> LP_done
     并保留 PM2/PM6（无工艺边，仅展示）。
     """
     robot_capacity = 2 if int(robot_capacity) == 2 else 1
+    process_time_map = process_time_map or {}
+    pm1_time = int(process_time_map.get("PM1", 100))
+    pm3_time = int(process_time_map.get("PM3", 300))
+    pm4_time = int(process_time_map.get("PM4", 300))
     modules: Dict[str, SingleModuleSpec] = {
         "LP": SingleModuleSpec(tokens=n_wafer, ptime=0, capacity=max(1, n_wafer)),
-        "PM1": SingleModuleSpec(tokens=0, ptime=100, capacity=1),
+        "PM1": SingleModuleSpec(tokens=0, ptime=pm1_time, capacity=1),
         "PM2": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
-        "PM3": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
-        "PM4": SingleModuleSpec(tokens=0, ptime=300, capacity=1),
+        "PM3": SingleModuleSpec(tokens=0, ptime=pm3_time, capacity=1),
+        "PM4": SingleModuleSpec(tokens=0, ptime=pm4_time, capacity=1),
         "PM6": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
         "LP_done": SingleModuleSpec(tokens=0, ptime=0, capacity=max(1, n_wafer)),
         # 关键约束：在 d_TM1 中停留 ttime 秒后，才允许进入目标腔室

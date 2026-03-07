@@ -13,6 +13,8 @@
 - `td_petri_modeling.md`
 - `td_petri.md`
 - `viz.md`
+- `env_place_obs.md`
 
 说明：
 - `viz.md`：可视化模块文档（含 PySide6 菜单栏、设备切换占位、晶圆数量占位、模型/动作序列选择入口说明）。
+- `env_place_obs.md`：单设备环境 `Env_PN_Single_PlaceObs` 的库所中心观测设计与特征定义。

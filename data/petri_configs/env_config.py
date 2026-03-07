@@ -24,6 +24,22 @@ def _default_reward_config() -> Dict[str, int]:
     }
 
 
+def _default_single_process_time_map() -> Dict[str, int]:
+    return {
+        "PM1": 100,
+        "PM3": 300,
+        "PM4": 300,
+    }
+
+
+def _default_single_proc_time_rand_scale_map() -> Dict[str, Dict[str, float]]:
+    return {
+        "PM1": {"min": 1.0, "max": 1.0},
+        "PM3": {"min": 1.0, "max": 1.0},
+        "PM4": {"min": 1.0, "max": 1.0},
+    }
+
+
 @dataclass
 class PetriEnvConfig:
     """
@@ -84,6 +100,17 @@ class PetriEnvConfig:
     single_cleaning_trigger_wafers: int = 2
     single_cleaning_duration: int = 150
     single_u_lp_boundary_enabled: bool = True
+    # 单设备工序时间配置（秒）
+    single_process_time_map: Dict[str, int] = field(default_factory=_default_single_process_time_map)
+    # 单设备工序时间随机扰动（按 episode 固定）
+    single_proc_time_rand_enabled: bool = False
+    # 单设备工序时间随机扰动区间（按腔室独立配置）
+    single_proc_time_rand_scale_map: Dict[str, Dict[str, float]] = field(
+        default_factory=_default_single_proc_time_rand_scale_map
+    )
+    # 兼容旧版统一随机区间（当 single_proc_time_rand_scale_map 缺失时回退使用）
+    single_proc_time_rand_min_scale: float = 1.0
+    single_proc_time_rand_max_scale: float = 1.0
 
     # 路线与晶圆分配（可选；无则用默认双路线）
     n_wafer_route1: Optional[int] = None
