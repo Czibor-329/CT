@@ -24,7 +24,7 @@ from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
-MAX_TIME = 8000
+MAX_TIME = 12000
 CHAMBER = 1
 DELIVERY_ROBOT = 2
 SOURCE = 3
@@ -63,7 +63,31 @@ class PetriSingleDevice:
         self.wait_durations = _normalize_wait_durations(
             getattr(config, "single_wait_durations", [5, 10, 20, 50, 100])
         )
-        self._single_process_chambers: Tuple[str, ...] = ("PM1", "PM3", "PM4")
+        self.single_route_code = 1 if int(getattr(config, "single_route_code", 0)) == 1 else 0
+        if self.single_route_code == 1:
+            self._single_process_chambers = ("PM1", "PM3", "PM4", "PM6")
+            self._u_targets = {
+                "LP": ["PM1"],
+                "PM1": ["PM3", "PM4"],
+                "PM3": ["PM6"],
+                "PM4": ["PM6"],
+                "PM6": ["LP_done"],
+            }
+            self._step_map = {"PM1": 1, "PM3": 2, "PM4": 2, "PM6": 3, "LP_done": 4}
+            self._release_station_aliases = {"s1": ["PM1"], "s2": ["PM3", "PM4"], "s3": ["PM6"]}
+            self._release_chain_by_u = {"u_LP": ["s1", "s2", "s3"]}
+        else:
+            self._single_process_chambers = ("PM1", "PM3", "PM4")
+            self._u_targets = {
+                "LP": ["PM1"],
+                "PM1": ["PM3", "PM4"],
+                "PM3": ["LP_done"],
+                "PM4": ["LP_done"],
+            }
+            self._step_map = {"PM1": 1, "PM3": 2, "PM4": 2, "LP_done": 3}
+            self._release_station_aliases = {"s1": ["PM1"], "s2": ["PM3", "PM4"]}
+            self._release_chain_by_u = {"u_LP": ["s1", "s2"]}
+        self._ready_chambers: Tuple[str, ...] = tuple(self._single_process_chambers)
         self.single_proc_time_rand_enabled = bool(getattr(config, "single_proc_time_rand_enabled", False))
         self.single_proc_time_rand_min_scale = float(getattr(config, "single_proc_time_rand_min_scale", 1.0))
         self.single_proc_time_rand_max_scale = float(getattr(config, "single_proc_time_rand_max_scale", 1.0))
@@ -81,6 +105,7 @@ class PetriSingleDevice:
             ttime=max(1, self.T_transport),
             robot_capacity=self.robot_capacity,
             process_time_map=self._base_process_time_map,
+            route_code=self.single_route_code,
         )
         self.pre: np.ndarray = info["pre"]
         self.pre_color: np.ndarray = info.get("pre_color", self.pre[:, :, None])
@@ -94,12 +119,6 @@ class PetriSingleDevice:
         self.id2p_name: List[str] = info["id2p_name"]
         self.id2t_name: List[str] = info["id2t_name"]
         self.idle_idx: Dict[str, int] = info["idle_idx"]
-        self._u_targets: Dict[str, List[str]] = {
-            "LP": ["PM1"],
-            "PM1": ["PM3", "PM4"],
-            "PM3": ["LP_done"],
-            "PM4": ["LP_done"],
-        }
         self.P = self.pre.shape[0]
         self.T = self.pre.shape[1]
         self.ttime = int(np.max(info["ttime"])) if len(info["ttime"]) > 0 else 5
@@ -124,8 +143,8 @@ class PetriSingleDevice:
         self._next_machine_id = 1
         self._last_deadlock = False
         self.no_release_penalty = False
-        self._chamber_timeline: Dict[str, list] = {"PM1": [], "PM3": [], "PM4": []}
-        self._chamber_active: Dict[str, Dict[int, int]] = {"PM1": {}, "PM3": {}, "PM4": {}}
+        self._chamber_timeline: Dict[str, list] = {name: [] for name in self._single_process_chambers}
+        self._chamber_active: Dict[str, Dict[int, int]] = {name: {} for name in self._single_process_chambers}
         self._init_single_cleaning_state()
 
     def step(self, a1=None, detailed_reward: bool = False, wait_duration: Optional[int] = None):
@@ -263,8 +282,8 @@ class PetriSingleDevice:
         self._consecutive_wait_time = 0
         self._next_machine_id = 1
         self._last_deadlock = False
-        self._chamber_timeline = {"PM1": [], "PM3": [], "PM4": []}
-        self._chamber_active = {"PM1": {}, "PM3": {}, "PM4": {}}
+        self._chamber_timeline = {name: [] for name in self._single_process_chambers}
+        self._chamber_active = {name: {} for name in self._single_process_chambers}
         self._init_single_cleaning_state()
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self._update_marking_vector()
@@ -361,8 +380,7 @@ class PetriSingleDevice:
                 delattr(tok, "_dst_level_targets")
             if hasattr(tok, "_dst_level_full_on_pick"):
                 delattr(tok, "_dst_level_full_on_pick")
-            step_map = {"PM1": 1, "PM3": 2, "PM4": 2, "LP_done": 3}
-            tok.step = max(int(getattr(tok, "step", 0)), step_map.get(target, 0))
+            tok.step = max(int(getattr(tok, "step", 0)), self._step_map.get(target, 0))
             self._track_enter(tok, target)
             if target == "LP_done":
                 self.done_count += 1
@@ -528,7 +546,7 @@ class PetriSingleDevice:
         return chamber_map
 
     def _preprocess_process_time_map(self, process_time_map: Dict[str, int]) -> Dict[str, int]:
-        defaults = {"PM1": 100, "PM3": 300, "PM4": 300}
+        defaults = {"PM1": 100, "PM3": 300, "PM4": 300, "PM6": 300}
         return _preprocess_process_time_map(
             process_time_map=process_time_map,
             chambers=self._single_process_chambers,
@@ -657,9 +675,9 @@ class PetriSingleDevice:
     def _has_ready_chamber_wafers(self) -> bool:
         """
         判断是否存在“加工完成待取片”晶圆。
-        规则：在 PM1/PM3/PM4 任一腔室中，存在 token 满足 stay_time >= processing_time。
+        规则：在当前路径定义的任一加工腔室中，存在 token 满足 stay_time >= processing_time。
         """
-        for chamber_name in ("PM1", "PM3", "PM4"):
+        for chamber_name in self._ready_chambers:
             place = self._get_place(chamber_name)
             processing_time = int(getattr(place, "processing_time", 0))
             if processing_time <= 0:
@@ -786,7 +804,7 @@ class PetriSingleDevice:
     def blame_release_violations(self) -> Dict[int, float]:
         """
         事后追责：基于当前 fire_log 与 _chamber_timeline，回溯可能导致下游容量冲突的 u_* 动作。
-        单设备中将 PM1 统一视为 s1，PM3/PM4 合并视为 s2（并行机台池）。
+        单设备中会按路径代号聚合站点：s1=PM1，s2=PM3∪PM4；若 code=1 则新增 s3=PM6。
         返回 fire_log_index -> penalty。
         """
         blame: Dict[int, float] = {}
@@ -804,22 +822,17 @@ class PetriSingleDevice:
             intervals.sort(key=lambda x: x[0])
             return intervals
 
-        # 站点别名：PM1 -> s1，PM3/PM4 -> s2（并行机台池）
-        intervals_s1 = build_intervals("PM1")
-        intervals_s2 = build_intervals("PM3") + build_intervals("PM4")
-        intervals_s2.sort(key=lambda x: x[0])
-        intervals_by_station: Dict[str, List[tuple]] = {
-            "s1": intervals_s1,
-            "s2": intervals_s2,
-        }
-        capacity_by_station: Dict[str, int] = {
-            "s1": capacities.get("PM1", 1),
-            "s2": capacities.get("PM3", 0) + capacities.get("PM4", 0),
-        }
-        proc_time_by_station: Dict[str, int] = {
-            "s1": proc_times.get("PM1", 0),
-            "s2": max(proc_times.get("PM3", 0), proc_times.get("PM4", 0)),
-        }
+        intervals_by_station: Dict[str, List[tuple]] = {}
+        capacity_by_station: Dict[str, int] = {}
+        proc_time_by_station: Dict[str, int] = {}
+        for station, chambers in self._release_station_aliases.items():
+            merged: List[tuple] = []
+            for chamber_name in chambers:
+                merged.extend(build_intervals(chamber_name))
+            merged.sort(key=lambda x: x[0])
+            intervals_by_station[station] = merged
+            capacity_by_station[station] = int(sum(capacities.get(name, 0) for name in chambers))
+            proc_time_by_station[station] = int(max((proc_times.get(name, 0) for name in chambers), default=0))
 
         edge_transfer = self.T_transport + self.T_load
 
@@ -827,8 +840,8 @@ class PetriSingleDevice:
             occupied = sum(1 for (e, l, wid0) in intervals if e <= at_time < l and wid0 < current_wid)
             return occupied + 1 > cap
 
-        # 单设备 downstream chain：统一为 s1 -> s2（s2 是 PM3/PM4 合并池）
-        chain_map: Dict[str, List[str]] = {"u_LP": ["s1", "s2"]}
+        # 单设备 downstream chain：按路径代号切换（code0: s1->s2, code1: s1->s2->s3）
+        chain_map: Dict[str, List[str]] = dict(self._release_chain_by_u)
 
         # 2) 回溯 fire_log，针对每个 u_* 动作检查其 downstream chain 是否存在容量冲突。
         penalty_coeff = float(self.release_penalty_coef) * 100.0

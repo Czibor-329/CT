@@ -29,6 +29,7 @@ def _default_single_process_time_map() -> Dict[str, int]:
         "PM1": 100,
         "PM3": 300,
         "PM4": 300,
+        "PM6": 300,
     }
 
 
@@ -101,10 +102,14 @@ class PetriEnvConfig:
     # 单设备清洗配置（训练简化版）
     single_cleaning_enabled: bool = True
     single_cleaning_targets: List[str] = field(default_factory=lambda: ["PM3", "PM4"])
-    single_cleaning_trigger_wafers: int = 2
+    single_cleaning_trigger_wafers: int = 5
     single_cleaning_duration: int = 150
     # 单设备工序时间配置（秒）
     single_process_time_map: Dict[str, int] = field(default_factory=_default_single_process_time_map)
+    # 单设备路径代号（整数切换预置路径）
+    # 0: PM1 -> [PM3/PM4] -> LP_done
+    # 1: PM1 -> [PM3/PM4] -> PM6 -> LP_done
+    single_route_code: int = 1
     # 单设备工序时间随机扰动（按 episode 固定）
     single_proc_time_rand_enabled: bool = False
     # 单设备工序时间随机扰动区间（按腔室独立配置）
@@ -171,6 +176,7 @@ class PetriEnvConfig:
         if self.n_wafer_route1 is not None or self.n_wafer_route2 is not None:
             lines.append(f"  路线分配: route1={self.n_wafer_route1}, route2={self.n_wafer_route2}")
         lines.append(f"  单设备机械手容量: {self.single_robot_capacity}")
+        lines.append(f"  单设备路径代号: {self.single_route_code}")
         
         if self.end_place_name != "LP_done":
             lines.append(f"  终点库所: {self.end_place_name}")

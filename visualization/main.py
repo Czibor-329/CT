@@ -56,15 +56,18 @@ def build_adapter(
     adapter_name: str,
     device_mode: str = "cascade",
     robot_capacity: int = 1,
+    route_code: int | None = None,
     env_overrides: dict | None = None,
 ):
     if adapter_name != "petri":
         raise ValueError(f"不支持的适配器: {adapter_name}")
     if device_mode == "single":
         env_overrides = dict(env_overrides or {})
+        selected_route_code = env_overrides.get("single_route_code", route_code)
         env = Env_PN_Single(
             detailed_reward=True,
             robot_capacity=int(env_overrides.get("single_robot_capacity", robot_capacity)),
+            route_code=None if selected_route_code is None else int(selected_route_code),
             process_time_map=env_overrides.get("single_process_time_map"),
             proc_time_rand_enabled=env_overrides.get("single_proc_time_rand_enabled"),
             proc_time_rand_scale_map=env_overrides.get("single_proc_time_rand_scale_map"),
@@ -341,6 +344,7 @@ def apply_model_for_mode(model_path: str, device_mode: str, window: PetriMainWin
 def main() -> int:
     parser = argparse.ArgumentParser(description="PySide6 Petri 可视化")
     parser.add_argument("--adapter", default="petri", choices=["petri"], help="算法适配器")
+    parser.add_argument("--single-route-code", type=int, default=None, choices=[0, 1], help="单设备路径代号（不传则使用 single.json）")
     parser.add_argument("--model", "-m", type=str, help="模型文件路径")
     parser.add_argument("--no-model", action="store_true", help="不加载模型")
     args = parser.parse_args()
@@ -348,7 +352,12 @@ def main() -> int:
     # Windows 任务栏图标 fix
     set_windows_app_id()
 
-    adapter = build_adapter(args.adapter, device_mode="single", robot_capacity=1)
+    adapter = build_adapter(
+        args.adapter,
+        device_mode="single",
+        robot_capacity=1,
+        route_code=args.single_route_code,
+    )
     viewmodel = PetriViewModel(adapter)
 
     app = QApplication(sys.argv)
@@ -362,6 +371,7 @@ def main() -> int:
             args.adapter,
             device_mode=mode,
             robot_capacity=robot_capacity,
+            route_code=args.single_route_code,
             env_overrides=env_overrides,
         )
     )

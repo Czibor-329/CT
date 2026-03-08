@@ -92,7 +92,8 @@ class BasedToken:
 
 **说明**：单设备 Petri 网实现（独立文件，不改原 `pn.py`），仅 1 个机械手，8 个腔体命名如下：
 - `LP`, `LP_done`, `PM1`~`PM6`
-- 其中 `PM2/PM6` 为展示腔体，不参与工艺流转；`PM5` 为 UI 占位腔体（模型不参与流转）
+- 其中 `PM2` 为展示腔体，不参与工艺流转；`PM5` 为 UI 占位腔体（模型不参与流转）
+- `PM6` 是否参与工艺由 `PetriEnvConfig.single_route_code` 决定
 
 **构网来源**
 - `solutions/Continuous_model/construct_single.py`
@@ -108,8 +109,8 @@ class BasedToken:
   - `single_cleaning_duration=150`
 
 **工艺路线**
-- `LP -> PM1(100s) -> PM3(300s) -> LP_done`
-- `LP -> PM1(100s) -> PM4(300s) -> LP_done`
+- `single_route_code=0`（默认）：`LP -> PM1(100s) -> PM3/PM4(300s) -> LP_done`
+- `single_route_code=1`：`LP -> PM1(100s) -> PM3/PM4(300s) -> PM6(300s) -> LP_done`
 - 双臂模式约束：`u_*` 仅在可解析到有效目标腔室时才允许发射；若下游层满导致目标不可解析，则该 `u_*` 必须禁用，避免出现 `LP -> d_TM1 -> LP_done` 的非法短路。
 - 上述约束同样适用于 `d_TM1` 为空时：双臂“可任意取片”不等于可忽略目标可达性，目标不可解析时必须禁用 `u_*`。
 
@@ -122,14 +123,14 @@ class BasedToken:
 - `step(t=None, wait=None, with_reward=False, detailed_reward=False, ...)`：执行单步（动作校验 -> 发射/等待 -> 时间推进 -> 奖励 -> done）
 - `calc_reward(t1, t2, detailed=False)`：奖励计算（`detailed_reward=True` 时返回含 `total` 的字典）
 - `blame_release_violations() -> Dict[int, float]`：基于 `_chamber_timeline` 的单设备事后追责，输出 `fire_log_index -> penalty`
-  - 追责站点统一命名：`s1=PM1`，`s2=PM3∪PM4`（合并时间线与容量池）
-  - `u_LP` 链路按 `s1 -> s2` 判定，`s2` 容量取 `cap(PM3)+cap(PM4)`，避免“实际走 PM4 却被 PM3 时间线误罚”
+  - `single_route_code=0`：追责站点 `s1=PM1`，`s2=PM3∪PM4`，`u_LP` 链路按 `s1 -> s2` 判定
+  - `single_route_code=1`：在上述基础上增加 `s3=PM6`，`u_LP` 链路扩展为 `s1 -> s2 -> s3`
 - 清洗事件日志会附加写入 `fire_log`（`event_type=cleaning_start|cleaning_end`），用于后续追责/复盘。
 - `calc_wafer_statistics()`：返回统计字典（供可视化左栏读取）
 
 **两阶段训练相关字段**
 - `no_release_penalty: bool`：第一阶段采样时置 `True`，第二阶段回填惩罚时置 `False`
-- `_chamber_timeline/_chamber_active`：记录 PM1/PM3/PM4 的进入离开时间线
+- `_chamber_timeline/_chamber_active`：按路径代号记录加工腔体进入离开时间线（`code=0` 为 PM1/PM3/PM4；`code=1` 额外包含 PM6）
 
 **驻留时间更新规则（单设备）**
 - `LP`（type=3）中的 token 不更新 `stay_time`，与 `pn.py` 保持一致
@@ -143,7 +144,7 @@ class BasedToken:
   - Stage2：加工完成、目标可达与 dwell/清洗过滤（`get_enable_t()` 最终返回）
 - WAIT 掩码规则（单设备）：
   - 默认启用所有 wait 档位；
-  - 若 `PM1/PM3/PM4` 任一腔室存在 token 满足 `stay_time >= processing_time`（加工完成待取片），禁用 `WAIT>5s`，仅保留 `WAIT_5s`。
+  - 若当前路径任一加工腔室存在 token 满足 `stay_time >= processing_time`（加工完成待取片），禁用 `WAIT>5s`，仅保留 `WAIT_5s`。
 - `u_LP` 不再使用 Stage2 额外边界拦截；当前仅遵循通用使能规则（加工完成、目标可达、清洗过滤与运输位 dwell 约束）。
 - 当 `t_*` 的目标腔室处于 `is_cleaning=True` 时，Stage2 才禁用该变迁（死锁判定仍基于未清洗过滤的 Stage1）。
 - 死锁定义：`LP_done` 未完成且 Stage1 无任何使能变迁。

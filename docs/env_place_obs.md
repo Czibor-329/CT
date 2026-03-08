@@ -5,7 +5,8 @@
 - When: 当训练策略需要按库所/机器状态建模，而不是按晶圆列表拼接时使用。
 - Not: 不改 observation 语义，不改 `reset/step/reward` 接口形态；动作空间已扩展为多档 WAIT。
 - Key rules:
- - observation 按 `LP -> TM(d_TM1) -> PM1 -> PM3 -> PM4` 顺序拼接。
+ - observation 按 `LP -> TM(d_TM1) -> PM*` 顺序拼接，`PM*` 由 `single_route_code` 决定。
+ - `route_code=0` 时 `PM* = PM1, PM3, PM4`；`route_code=1` 时 `PM* = PM1, PM3, PM4, PM6`。
  - `LP_done` 不进入主体 observation。
  - 时间相关特征统一归一化并裁剪到 `[0, 1]`。
 
@@ -23,10 +24,11 @@
  - 当 `wait_duration == 5` 时，固定推进 5 秒，不做事件截断。
  - 当 `LP_done` 已有完工晶圆时，大于 5 秒的 WAIT 会被动作掩码屏蔽。
  - 其他 WAIT 仍按 `min(wait_duration, next_event_delta)` 推进，避免一次跳过多个关键决策点。
-- 观测维度固定为 32：
+- 观测维度随路线配置变化：
  - LP: 1 维
  - TM: 4 维
- - PM1/PM3/PM4: 每个 9 维
+ - `route_code=0`：`PM1/PM3/PM4`，每个 9 维，总维度 `1 + 4 + 9*3 = 32`
+ - `route_code=1`：`PM1/PM3/PM4/PM6`，每个 9 维，总维度 `1 + 4 + 9*4 = 41`
 - LP 特征：
  - `remaining_wafer_norm = clip(len(LP.tokens) / n_wafer, 0, 1)`
 - TM 特征：
@@ -48,6 +50,7 @@
 ## Configuration / API
 - 类名：`Env_PN_Single_PlaceObs`
 - 基于：`solutions/Continuous_model/env_single.py`
+- 路线配置：`single_route_code`（影响 observation 的 PM 列表与维度）
 - 关键归一化参数：
  - `P_Residual_time`
  - `D_Residual_time`
@@ -55,11 +58,12 @@
  - `single_cleaning_trigger_wafers`
  - `SCRAP_CLIP_THRESHOLD`
 - 单设备工序时间参数：
- - `single_process_time_map.PM1/PM3/PM4`
+ - `single_process_time_map.PM1/PM3/PM4`（`route_code=0`）
+ - `single_process_time_map.PM1/PM3/PM4/PM6`（`route_code=1`）
  - 工序时间会在环境内部预处理为最接近的 5 的倍数（最小 5）
 - 单设备工序时间随机参数（episode 固定采样）：
  - `single_proc_time_rand_enabled`
- - `single_proc_time_rand_scale_map.PM1/PM3/PM4.{min,max}`（每个加工腔室独立区间）
+ - `single_proc_time_rand_scale_map.<PM>.{min,max}`（`<PM>` 由路线下的加工腔室集合决定）
  - `single_proc_time_rand_min_scale`
  - `single_proc_time_rand_max_scale`
 - 训练脚本参数：
@@ -72,7 +76,8 @@
  - 在 `--device-mode single` 下传入后使用 `Env_PN_Single_PlaceObs`
 
 ## Examples
-- 正例：需要策略直接感知 `PM3` 与 `PM4` 清洗状态时使用本环境。
+- 正例：`route_code=0` 场景下，使用 32 维 place obs（`LP+TM+PM1/3/4`）。
+- 正例：`route_code=1` 场景下，使用 41 维 place obs（额外包含 `PM6` 9 维特征）。
 - 反例：需要把每片晶圆位置编码成 one-hot 序列时不应使用本环境。
 
 ## Edge Cases / Gotchas

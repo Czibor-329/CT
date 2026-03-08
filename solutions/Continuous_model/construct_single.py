@@ -25,35 +25,47 @@ def build_single_device_net(
     ttime: int = 5,
     robot_capacity: int = 1,
     process_time_map: Optional[Dict[str, int]] = None,
+    route_code: int = 0,
 ) -> Dict[str, object]:
     """
-    构建单设备 Petri 网结构：
-    LP -> PM1 -> [PM3, PM4] -> LP_done
-    并保留 PM2/PM6（无工艺边，仅展示）。
+    构建单设备 Petri 网结构（通过 route_code 选择预置路径）：
+    - route_code=0: LP -> PM1 -> [PM3, PM4] -> LP_done
+    - route_code=1: LP -> PM1 -> [PM3, PM4] -> PM6 -> LP_done
+    并保留 PM2（无工艺边，仅展示）。
     """
     robot_capacity = 2 if int(robot_capacity) == 2 else 1
     process_time_map = process_time_map or {}
+    route_code = int(route_code)
     pm1_time = int(process_time_map.get("PM1", 100))
     pm3_time = int(process_time_map.get("PM3", 300))
     pm4_time = int(process_time_map.get("PM4", 300))
+    pm6_time = int(process_time_map.get("PM6", 300 if route_code == 1 else 0))
     modules: Dict[str, SingleModuleSpec] = {
         "LP": SingleModuleSpec(tokens=n_wafer, ptime=0, capacity=max(1, n_wafer)),
         "PM1": SingleModuleSpec(tokens=0, ptime=pm1_time, capacity=1),
         "PM2": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
         "PM3": SingleModuleSpec(tokens=0, ptime=pm3_time, capacity=1),
         "PM4": SingleModuleSpec(tokens=0, ptime=pm4_time, capacity=1),
-        "PM6": SingleModuleSpec(tokens=0, ptime=0, capacity=1),   # 展示腔体
+        "PM6": SingleModuleSpec(tokens=0, ptime=pm6_time, capacity=1),
         "LP_done": SingleModuleSpec(tokens=0, ptime=0, capacity=max(1, n_wafer)),
         # 关键约束：在 d_TM1 中停留 ttime 秒后，才允许进入目标腔室
         "d_TM1": SingleModuleSpec(tokens=0, ptime=ttime, capacity=robot_capacity),
     }
 
     id2p_name = list(modules.keys())
-    id2t_name = [
-        "u_LP", "t_PM1",
-        "u_PM1", "t_PM3", "t_PM4",
-        "u_PM3", "u_PM4", "t_LP_done",
-    ]
+    if route_code == 1:
+        id2t_name = [
+            "u_LP", "t_PM1",
+            "u_PM1", "t_PM3", "t_PM4",
+            "u_PM3", "u_PM4", "t_PM6",
+            "u_PM6", "t_LP_done",
+        ]
+    else:
+        id2t_name = [
+            "u_LP", "t_PM1",
+            "u_PM1", "t_PM3", "t_PM4",
+            "u_PM3", "u_PM4", "t_LP_done",
+        ]
 
     p_idx = {name: i for i, name in enumerate(id2p_name)}
     t_idx = {name: i for i, name in enumerate(id2t_name)}
@@ -76,11 +88,14 @@ def build_single_device_net(
 
     add_arc("PM3", "u_PM3", "d_TM1")
     add_arc("PM4", "u_PM4", "d_TM1")
+    if route_code == 1:
+        add_arc("d_TM1", "t_PM6", "PM6")
+        add_arc("PM6", "u_PM6", "d_TM1")
     add_arc("d_TM1", "t_LP_done", "LP_done")
 
     # color-aware 前置矩阵（color 维对应 token.where）
-    # 单片完整流转共 7 次发射，where 从 0 增长到 7；t_* 在 d_TM1 的合法 where 为 1/3/5。
-    max_where = 7
+    # t_* 在 d_TM1 的合法 where 固定为奇数位：1/3/(5)/...
+    max_where = 9 if route_code == 1 else 7
     pre_color = np.zeros((P, T, max_where + 1), dtype=int)
     for t_name, tid in t_idx.items():
         if t_name.startswith("u_"):
@@ -91,8 +106,10 @@ def build_single_device_net(
             allowed_where = (1,)
         elif t_name in ("t_PM3", "t_PM4"):
             allowed_where = (3,)
-        elif t_name == "t_LP_done":
+        elif t_name == "t_PM6":
             allowed_where = (5,)
+        elif t_name == "t_LP_done":
+            allowed_where = (7,) if route_code == 1 else (5,)
         else:
             allowed_where = ()
         for c in allowed_where:
@@ -114,7 +131,7 @@ def build_single_device_net(
             ptype = 3
         elif name.startswith("d_"):
             ptype = 2
-        elif name in {"PM2", "PM6"}:
+        elif name == "PM2" or (name == "PM6" and route_code != 1):
             ptype = 5
         else:
             ptype = 1
@@ -140,4 +157,5 @@ def build_single_device_net(
         "n_wafer": n_wafer,
         "n_wafer_route1": n_wafer,
         "n_wafer_route2": 0,
+        "single_route_code": route_code,
     }

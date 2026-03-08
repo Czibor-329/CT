@@ -251,6 +251,7 @@ def _rollout_single_sequence(
         "single_process_time_map": dict(getattr(env.net, "_episode_process_time_map", {})),
         "single_proc_time_rand_enabled": False,
         "single_robot_capacity": int(robot_capacity),
+        "single_route_code": int(getattr(env.net, "single_route_code", 0)),
         "use_place_obs": bool(use_place_obs),
         "training_phase": int(training_phase),
     }

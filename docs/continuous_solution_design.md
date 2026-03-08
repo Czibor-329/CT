@@ -94,14 +94,16 @@ flowchart TB
 - 对并行目标机台场景，多个 `t_dst` 共享单一 `u_src` 可减少动作空间冗余并降低策略学习难度。
 
 ### Behavior
-- 工艺路线：`LP -> PM1(100s) -> [PM3|PM4](300s) -> LP_done`
-- 单设备工序时长支持配置：`single_process_time_map = {PM1, PM3, PM4}`；输入值会先预处理为最接近的 5 的倍数（最小 5）。
-- 单设备训练支持 episode 级工序时长随机扰动：`single_proc_time_rand_enabled` + `single_proc_time_rand_scale_map`（`PM1/PM3/PM4` 各自 `min/max`）；每个 episode 采样一次并固定整局生效。未配置单腔室时回退到统一 `single_proc_time_rand_min_scale/max_scale`。
-- `PM2/PM6` 仅用于界面占位展示，动作不可达；`PM5` 作为 UI 占位显示，不参与模型工艺流转。
+- 单设备新增路径代号参数：`single_route_code`（整数切换预置路径）。
+  - `0`：`LP -> PM1(100s) -> [PM3|PM4](300s) -> LP_done`（默认，兼容旧行为）
+  - `1`：`LP -> PM1(100s) -> [PM3|PM4](300s) -> PM6(300s) -> LP_done`
+- 单设备工序时长支持配置：`single_process_time_map = {PM1, PM3, PM4, PM6}`；输入值会先预处理为最接近的 5 的倍数（最小 5）。
+- 单设备训练支持 episode 级工序时长随机扰动：`single_proc_time_rand_enabled` + `single_proc_time_rand_scale_map`（`PM1/PM3/PM4/PM6` 各自 `min/max`）；每个 episode 采样一次并固定整局生效。未配置单腔室时回退到统一 `single_proc_time_rand_min_scale/max_scale`。
+- `PM2` 仅用于界面占位展示；`PM5` 作为 UI 占位显示，不参与模型工艺流转。`PM6` 是否参与流转由 `single_route_code` 决定。
 - 执行链：`construct_single` 构网 -> `_get_enable_t` -> `step` -> `calc_reward`
 - 使能动作接口：`List[int]`（单机械手语义）
 - 释放追责：支持 `blame_release_violations()`，利用单设备 `_chamber_timeline` 做 second-pass 回填
-- 释放追责站点命名统一为 `s1/s2`：`s1=PM1`，`s2=PM3∪PM4`（并行机台池）；`u_LP` 只检查 `s1->s2`，`s2` 容量按 `cap(PM3)+cap(PM4)` 计算，避免跨分支误判。
+- 释放追责站点按路径代号聚合：`s1=PM1`，`s2=PM3∪PM4`；当 `single_route_code=1` 时新增 `s3=PM6`，`u_LP` 链路检查扩展为 `s1->s2->s3`。
 - `u_src` 发射前会检查“至少一个候选目标可接收”，并在发射时确定 `_target_place`。
 - `t_*` 使能在 `d_TM1` 侧额外受 `pre_color[:,:,where]` 限制：只有当前 `where` 对应颜色截面允许的目标才可放行。
 - 每次晶圆被变迁移动后执行 `where += 1`，用于推进 color 截面判定。

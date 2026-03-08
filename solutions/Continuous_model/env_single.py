@@ -30,6 +30,7 @@ class Env_PN_Single(EnvBase):
         training_phase: int = 2,
         reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
+        route_code: Optional[int] = None,
         process_time_map: Optional[Dict[str, int]] = None,
         proc_time_rand_enabled: Optional[bool] = None,
         proc_time_rand_scale_map: Optional[Dict[str, Dict[str, float]]] = None,
@@ -46,6 +47,8 @@ class Env_PN_Single(EnvBase):
         if reward_config:
             config.reward_config.update(reward_config)
         config.single_robot_capacity = 2 if int(robot_capacity) == 2 else 1
+        if route_code is not None:
+            config.single_route_code = int(route_code)
         if process_time_map is not None:
             config.single_process_time_map = {
                 str(chamber): int(value) for chamber, value in dict(process_time_map).items()
@@ -311,9 +314,18 @@ class Env_PN_Single_PlaceObs(Env_PN_Single):
     batch_locked = False
     SCRAP_CLIP_THRESHOLD = 20.0
 
+    def _get_place_obs_pm_names(self) -> List[str]:
+        # 观测 PM 列表与 pn_single 路线配置保持同源，避免 route 变更后维度漂移。
+        candidates = tuple(getattr(self.net, "_single_process_chambers", ("PM1", "PM3", "PM4")))
+        observed = [name for name in candidates if name in {"PM1", "PM3", "PM4", "PM6"}]
+        if not observed:
+            observed = ["PM1", "PM3", "PM4"]
+        return observed
+
     def _make_spec(self):
-        # LP(1) + TM(4) + PM1/PM3/PM4(各9)
-        obs_dim = 1 + 4 + 9 * 3
+        pm_names = self._get_place_obs_pm_names()
+        # LP(1) + TM(4) + 每个 PM 的 9 维特征（route 感知）
+        obs_dim = 1 + 4 + 9 * len(pm_names)
         self.observation_spec = Composite(
             observation=Unbounded(shape=(obs_dim,), dtype=torch.float32, device=self.device),
             action_mask=Binary(n=self.n_actions, dtype=torch.bool),
@@ -340,7 +352,7 @@ class Env_PN_Single_PlaceObs(Env_PN_Single):
             return [remaining_norm]
         if place_name == "TM":
             return self._extract_tm_features(place)
-        if place_name in {"PM1", "PM3", "PM4"}:
+        if place_name in {"PM1", "PM3", "PM4", "PM6"}:
             return self._extract_pm_features(place)
         return []
 
@@ -417,6 +429,6 @@ class Env_PN_Single_PlaceObs(Env_PN_Single):
         obs: List[float] = []
         obs.extend(self._extract_place_features("LP"))
         obs.extend(self._extract_place_features("TM"))
-        for pm_name in ("PM1", "PM3", "PM4"):
+        for pm_name in self._get_place_obs_pm_names():
             obs.extend(self._extract_place_features(pm_name))
         return np.array(obs, dtype=np.float32)
