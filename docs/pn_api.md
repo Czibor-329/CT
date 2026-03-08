@@ -117,6 +117,8 @@ class BasedToken:
 - `reset()`：重置网状态
 - `_get_enable_t() -> List[int]`：内部使能判定（单机械手）
 - `get_enable_t() -> List[int]`：外部使能接口
+- `get_enable_actions(wait_action_start=None) -> List[int]`：返回完整离散动作使能（`transition + wait`）
+- `get_action_mask(wait_action_start=None, n_actions=None) -> np.ndarray`：返回完整离散动作掩码（`transition + wait`）
 - `step(t=None, wait=None, with_reward=False, detailed_reward=False, ...)`：执行单步（动作校验 -> 发射/等待 -> 时间推进 -> 奖励 -> done）
 - `calc_reward(t1, t2, detailed=False)`：奖励计算（`detailed_reward=True` 时返回含 `total` 的字典）
 - `blame_release_violations() -> Dict[int, float]`：基于 `_chamber_timeline` 的单设备事后追责，输出 `fire_log_index -> penalty`
@@ -139,6 +141,9 @@ class BasedToken:
 - 使能计算分为两阶段：
   - Stage1：`pre/pst` + 容量 + 防死锁规则（用于死锁判定，`u_*` 在该阶段忽略清洗目标过滤）
   - Stage2：加工完成、目标可达与 dwell/清洗过滤（`get_enable_t()` 最终返回）
+- WAIT 掩码规则（单设备）：
+  - 默认启用所有 wait 档位；
+  - 若 `PM1/PM3/PM4` 任一腔室存在 token 满足 `stay_time >= processing_time`（加工完成待取片），禁用 `WAIT>5s`，仅保留 `WAIT_5s`。
 - `u_LP` 在 Stage2 增加“反推开工边界”：按 `PM1 -> min(PM3,PM4)` 的最早可接收窗口反推当前是否可取片；`PM3/PM4` 清洗态会将 `cleaning_remaining` 计入反推。
 - 该反推约束由 `single_u_lp_boundary_enabled` 控制（默认开启），且仅作用 Stage2，不影响 Stage1 死锁判定语义。
 - 当 `t_*` 的目标腔室处于 `is_cleaning=True` 时，Stage2 才禁用该变迁（死锁判定仍基于未清洗过滤的 Stage1）。

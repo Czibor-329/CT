@@ -3,7 +3,7 @@
 ## Abstract
 - What: 定义单设备单动作 TorchRL 环境 `Env_PN_Single_PlaceObs` 的 observation 结构。
 - When: 当训练策略需要按库所/机器状态建模，而不是按晶圆列表拼接时使用。
-- Not: 不修改底层 Petri 网推进逻辑，不改变 `reset/step/reward/action_mask` 行为。
+- Not: 不改 observation 语义，不改 `reset/step/reward` 接口形态；动作空间已扩展为多档 WAIT。
 - Key rules:
  - observation 按 `LP -> TM(d_TM1) -> PM1 -> PM3 -> PM4` 顺序拼接。
  - `LP_done` 不进入主体 observation。
@@ -18,6 +18,11 @@
 - 需要保留按 `token_id` 排序的观测语义时。
 
 ## Behavior / Rules
+- 动作空间沿用 `Env_PN_Single` 的统一动作目录：`transition + multi-wait`（默认 `5/10/20/50/100s`）。
+- WAIT 推进规则：
+ - 当 `wait_duration == 5` 时，固定推进 5 秒，不做事件截断。
+ - 当 `LP_done` 已有完工晶圆时，大于 5 秒的 WAIT 会被动作掩码屏蔽。
+ - 其他 WAIT 仍按 `min(wait_duration, next_event_delta)` 推进，避免一次跳过多个关键决策点。
 - 观测维度固定为 32：
  - LP: 1 维
  - TM: 4 维

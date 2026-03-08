@@ -18,7 +18,9 @@ from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
 MAX_TIME = 8000
-
+CHAMBER = 1
+DELIVERY_ROBOT = 2
+SOURCE = 3
 
 class PetriSingleDevice:
     def __init__(self, config: PetriEnvConfig = None) -> None:
@@ -52,6 +54,9 @@ class PetriSingleDevice:
         self.single_cleaning_trigger_wafers = max(1, int(getattr(config, "single_cleaning_trigger_wafers", 2)))
         self.single_cleaning_duration = max(0, int(getattr(config, "single_cleaning_duration", 150)))
         self.single_u_lp_boundary_enabled = bool(getattr(config, "single_u_lp_boundary_enabled", True))
+        self.wait_durations = self._normalize_wait_durations(
+            getattr(config, "single_wait_durations", [5, 10, 20, 50, 100])
+        )
         self._single_process_chambers: Tuple[str, ...] = ("PM1", "PM3", "PM4")
         self.single_proc_time_rand_enabled = bool(getattr(config, "single_proc_time_rand_enabled", False))
         self.single_proc_time_rand_min_scale = float(getattr(config, "single_proc_time_rand_min_scale", 1.0))
@@ -121,6 +126,21 @@ class PetriSingleDevice:
     def _round_to_nearest_five(value: float) -> int:
         rounded = int(round(float(value) / 5.0) * 5)
         return max(5, rounded)
+
+    @staticmethod
+    def _normalize_wait_durations(durations) -> List[int]:
+        """将输入的等待时间列表规范化为正整数列表，默认值为 [5]"""
+        values: List[int] = []
+        for raw in list(durations or []):
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                values.append(value)
+        if not values:
+            values = [5]
+        return sorted(set(values))
 
     def _sanitize_default_random_scales(self) -> None:
         min_scale = float(self.single_proc_time_rand_min_scale)
@@ -206,24 +226,6 @@ class PetriSingleDevice:
             cloned.append(cp)
         return cloned
 
-    def _debug_log(self, hypothesis_id: str, message: str, data: Dict[str, Any], run_id: str = "train-run") -> None:
-        # #region agent log
-        try:
-            payload = {
-                "sessionId": "2838c2",
-                "runId": run_id,
-                "hypothesisId": hypothesis_id,
-                "location": "solutions/Continuous_model/pn_single.py",
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }
-            with open("C:/Users/khand/OneDrive/code/dqn/CT/debug-2838c2.log", "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-        # #endregion
-
     def _get_place(self, name: str) -> Place:
         for p in self.marks:
             if p.name == name:
@@ -240,7 +242,7 @@ class PetriSingleDevice:
         if dt <= 0:
             return
         for p in self.marks:
-            if p.type == 3:  # 跳过 LP 中的 wafer
+            if p.type == SOURCE:  # 跳过 LP 中的 wafer
                 continue
             for tok in p.tokens:
                 tok.stay_time += dt
@@ -275,17 +277,6 @@ class PetriSingleDevice:
             if was_cleaning and remaining == 0:
                 p.is_cleaning = False
                 p.cleaning_reason = ""
-                # #region agent log
-                self._debug_log(
-                    hypothesis_id="H1",
-                    message="cleaning_end",
-                    data={
-                        "time": int(self.time),
-                        "chamber": p.name,
-                        "processed_wafer_count": int(getattr(p, "processed_wafer_count", 0)),
-                    },
-                )
-                # #endregion
                 self.fire_log.append(
                     {
                         "event_type": "cleaning_end",
@@ -295,6 +286,48 @@ class PetriSingleDevice:
                     }
                 )
 
+    def get_next_event_delta(self) -> Optional[int]:
+        """
+        计算当前时刻到下一个关键事件的时间差（秒）。
+        关键事件至少覆盖：
+        - 某加工完成（避免跨过关键取片决策点）
+        """
+        deltas: List[int] = []
+        for place in self.marks:
+            if int(place.type) == CHAMBER and len(place.tokens) > 0:
+                head = place.head()
+                delta = int(place.processing_time) - int(getattr(head, "stay_time", 0))
+                deltas.append(max(0, int(delta)))
+        if not deltas:
+            return None
+        return int(min(deltas))
+
+    def _has_completed_wafers(self) -> bool:
+        return len(self._get_place("LP_done").tokens) > 0
+
+    def _has_ready_chamber_wafers(self) -> bool:
+        """
+        判断是否存在“加工完成待取片”晶圆。
+        规则：在 PM1/PM3/PM4 任一腔室中，存在 token 满足 stay_time >= processing_time。
+        """
+        for chamber_name in ("PM1", "PM3", "PM4"):
+            place = self._get_place(chamber_name)
+            processing_time = int(getattr(place, "processing_time", 0))
+            if processing_time <= 0:
+                continue
+            for tok in place.tokens:
+                if int(getattr(tok, "stay_time", 0)) >= processing_time:
+                    return True
+        return False
+
+    def advance_time(self, dt: int, event_reason: str = "") -> None:
+        """推进时间并更新相关状态"""
+        _ = event_reason  # 预留参数，便于后续追踪不同推进原因。
+        safe_dt = max(0, int(dt))
+        self.time += safe_dt
+        self._update_stay_times(safe_dt)
+        self._advance_cleaning_and_idle(safe_dt)
+
     def _start_cleaning(self, place: Place, reason: str, trigger_count: int) -> None:
         if self.single_cleaning_duration <= 0:
             return
@@ -303,19 +336,6 @@ class PetriSingleDevice:
         place.cleaning_reason = reason
         place.processed_wafer_count = 0
         place.idle_time = 0
-        # #region agent log
-        self._debug_log(
-            hypothesis_id="H1",
-            message="cleaning_start",
-            data={
-                "time": int(self.time),
-                "chamber": place.name,
-                "rule": reason,
-                "duration": int(self.single_cleaning_duration),
-                "trigger_count": int(trigger_count),
-            },
-        )
-        # #endregion
         self.fire_log.append(
             {
                 "event_type": "cleaning_start",
@@ -426,23 +446,6 @@ class PetriSingleDevice:
         predicted_pm2_stage_enter_time = pm1_ready_to_unload_time + edge_transfer
         allow = predicted_pm2_stage_enter_time >= pm2_stage_accept_time
 
-        if not allow:
-            self._debug_log(
-                hypothesis_id="H5",
-                message="u_lp_reverse_boundary_blocked",
-                data={
-                    "time": int(self.time),
-                    "predicted_pm2_stage_enter_time": int(predicted_pm2_stage_enter_time),
-                    "pm2_stage_accept_time": int(pm2_stage_accept_time),
-                    "pm1_accept_time": int(pm1_accept_time),
-                    "pm3_accept_time": int(pm3_accept_time),
-                    "pm4_accept_time": int(pm4_accept_time),
-                    "pm3_cleaning": bool(getattr(self._get_place("PM3"), "is_cleaning", False)),
-                    "pm4_cleaning": bool(getattr(self._get_place("PM4"), "is_cleaning", False)),
-                    "pm3_predicted_cleaning_delay": int(pm3_predicted_cleaning_delay),
-                    "pm4_predicted_cleaning_delay": int(pm4_predicted_cleaning_delay),
-                },
-            )
         return allow
 
     def _select_target_for_source(
@@ -471,28 +474,6 @@ class PetriSingleDevice:
                 continue
             if len(target_place.tokens) < target_place.capacity:
                 return target
-        if source in {"PM1", "LP"} and candidates:
-            # #region agent log
-            self._debug_log(
-                hypothesis_id="H1",
-                message="no_target_available",
-                data={
-                    "time": int(self.time),
-                    "source": source,
-                    "preferred_target": preferred_target,
-                    "candidates": [
-                        {
-                            "name": tgt,
-                            "is_cleaning": bool(getattr(self._get_place(tgt), "is_cleaning", False)),
-                            "cleaning_remaining": int(getattr(self._get_place(tgt), "cleaning_remaining", 0)),
-                            "tokens": len(self._get_place(tgt).tokens),
-                            "capacity": int(self._get_place(tgt).capacity),
-                        }
-                        for tgt in candidates
-                    ],
-                },
-            )
-            # #endregion
         return None
 
     def _next_robot_machine(self) -> int:
@@ -514,7 +495,7 @@ class PetriSingleDevice:
 
     def _check_scrap(self) -> tuple[bool, Optional[Dict[str, Any]]]:
         for p in self.marks:
-            if p.type != 1 or len(p.tokens) == 0:
+            if p.type != CHAMBER or len(p.tokens) == 0:
                 continue
             tok = p.head()
             overtime = int(tok.stay_time - (p.processing_time + self.P_Residual_time))
@@ -659,31 +640,6 @@ class PetriSingleDevice:
                 if head_target is not None and head_target != target:
                     continue
             enabled.append(t)
-        if len(enabled) == 0:
-            # #region agent log
-            self._debug_log(
-                hypothesis_id="H2",
-                message="stage1_empty",
-                data={
-                    "time": int(self.time),
-                    "head_target": head_target,
-                    "head_where": head_where,
-                    "d_tm_tokens": len(d_tm.tokens),
-                    "locked_sources": sorted(list(locked_sources)),
-                    "lp_done_tokens": len(self._get_place("LP_done").tokens),
-                    "pm_states": {
-                        p.name: {
-                            "tokens": len(p.tokens),
-                            "is_cleaning": bool(getattr(p, "is_cleaning", False)),
-                            "cleaning_remaining": int(getattr(p, "cleaning_remaining", 0)),
-                            "processed_wafer_count": int(getattr(p, "processed_wafer_count", 0)),
-                        }
-                        for p in self.marks
-                        if p.name.startswith("PM")
-                    },
-                },
-            )
-            # #endregion
         return enabled
 
     def _apply_enable_stage2(self, stage1_enabled: List[int]) -> List[int]:
@@ -717,21 +673,6 @@ class PetriSingleDevice:
                 if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
                     continue
             enabled.append(t)
-        if len(stage1_enabled) > 0 and len(enabled) == 0:
-            # #region agent log
-            self._debug_log(
-                hypothesis_id="H3",
-                message="stage2_all_filtered",
-                data={
-                    "time": int(self.time),
-                    "stage1_enabled": [self.id2t_name[idx] for idx in stage1_enabled],
-                    "blocked_by_cleaning": blocked_by_cleaning,
-                    "d_tm_tokens": len(d_place.tokens),
-                    "dwell_time": int(dwell_time),
-                    "d_tm_head_stay": int(d_place.head().stay_time) if len(d_place.tokens) > 0 else None,
-                },
-            )
-            # #endregion
         return enabled
 
     def _get_enable_t(self) -> List[int]:
@@ -749,6 +690,40 @@ class PetriSingleDevice:
     def get_enable_t(self) -> List[int]:
         self._update_marking_vector()
         return self._get_enable_t()
+
+    def get_enable_actions(self, wait_action_start: Optional[int] = None) -> List[int]:
+        """
+        返回完整离散动作可用索引（transition + wait）。
+        wait 规则：
+        - 默认启用所有 wait 档位；
+        - 若存在加工完成待取片晶圆，仅启用 <=5s 的 wait。
+        """
+        start = int(self.T if wait_action_start is None else wait_action_start)
+        enabled = [int(t) for t in self.get_enable_t()]
+        restrict_long_wait = self._has_ready_chamber_wafers()
+        for offset, duration in enumerate(self.wait_durations):
+            if restrict_long_wait and int(duration) > 5:
+                continue
+            enabled.append(start + int(offset))
+        return enabled
+
+    def get_action_mask(
+        self,
+        wait_action_start: Optional[int] = None,
+        n_actions: Optional[int] = None,
+    ) -> np.ndarray:
+        """
+        返回完整离散动作掩码（transition + wait）。
+        """
+        start = int(self.T if wait_action_start is None else wait_action_start)
+        total_actions = int(
+            n_actions if n_actions is not None else (start + len(self.wait_durations))
+        )
+        mask = np.zeros(total_actions, dtype=bool)
+        for action in self.get_enable_actions(wait_action_start=start):
+            if 0 <= int(action) < total_actions:
+                mask[int(action)] = True
+        return mask
 
     def _track_enter(self, token: BasedToken, place_name: str) -> None:
         if token.token_id not in self._token_stats:
@@ -846,7 +821,7 @@ class PetriSingleDevice:
         # 加工奖励：每个加工位上每个晶圆根据加工进度给予奖励
         if self.reward_config.get("proc_reward", 1):
             for p in self.marks:
-                if p.type != 1 or len(p.tokens) == 0 or p.processing_time <= 0:
+                if p.type != CHAMBER or len(p.tokens) == 0 or p.processing_time <= 0:
                     continue
                 remain = max(0, p.processing_time - int(p.head().stay_time))
                 progress = min(dt, remain)
@@ -855,7 +830,7 @@ class PetriSingleDevice:
         # 与 pn.py 对齐：运输位(type=2, 单设备主要是 d_TM1)超过 D_Residual_time 后按超时秒数惩罚
         if self.reward_config.get("transport_penalty", 1):
             for p in self.marks:
-                if p.type != 2 or len(p.tokens) == 0:
+                if p.type != DELIVERY_ROBOT or len(p.tokens) == 0:
                     continue
                 for tok in p.tokens:
                     deadline = int(tok.enter_time) + int(self.D_Residual_time)
@@ -864,7 +839,7 @@ class PetriSingleDevice:
                         parts["penalty"] -= float(int(t2) - over_start) * float(self.transport_overtime_coef)
 
         for p in self.marks:
-            if p.type != 1 or len(p.tokens) == 0:
+            if p.type != CHAMBER or len(p.tokens) == 0:
                 continue
             left = p.processing_time + self.P_Residual_time - p.head().stay_time
             if self.reward_config.get("warn_penalty", 1) and left <= self.T_warn:
@@ -902,33 +877,61 @@ class PetriSingleDevice:
         self._update_marking_vector()
         return None, self.get_enable_t()
 
-    def step(
-        self,
-        a1=None,
-        a2=None,
-        wait1: bool = False,
-        wait2: bool = False,
-        with_reward: bool = False,
-        detailed_reward: bool = False,
-        t: Optional[int] = None,
-        wait: Optional[bool] = None,
-    ):
+    def step(self, a1=None, detailed_reward: bool = False, wait_duration: Optional[int] = None):
+        """
+        单设备一步推进入口。
+        - 非 wait：按既有 ttime 发射变迁
+        - wait：支持多档等待，并用关键事件截断，避免一次跨越多个决策点
+        """
+        DONE = False
+        SCRAPE = False
+
         self._last_deadlock = False
+        # ======超出最大运行时间直接判定为超时结束，避免“原地等待”导致的无效步骤======
         if self.time >= MAX_TIME:
             timeout_reward = {"total": -100.0, "timeout": True} if detailed_reward else -100.0
-            return True, timeout_reward, True
+            DONE = True
+            SCRAPE = True
+            return DONE, timeout_reward, SCRAPE
 
-        action = t if t is not None else a1
-        do_wait = bool(wait) or bool(wait1) or bool(wait2) or action is None
+        action = a1
+        do_wait = (wait_duration is not None) or action is None
 
         t1 = self.time
+
+        # wait 动作逻辑
         if do_wait:
-            t2 = t1 + 5
+            requested_wait = int(wait_duration)
+            assert requested_wait > 0, "wait_duration should be non-positive"
+            wait_requested_raw = int(requested_wait)
+            if self._has_completed_wafers() and requested_wait > 5:
+                # 完工后只允许最小 wait 粒度，避免长时间空等。
+                requested_wait = 5
+                wait_reason = "completed_wafer_cap_5s"
+                actual_dt = requested_wait
+            elif requested_wait == 5:
+                # 最小 wait 固定推进 5s，不做事件截断。
+                wait_reason = "fixed_5s"
+                actual_dt = requested_wait
+            else:
+                next_event_delta = self.get_next_event_delta()
+                if next_event_delta is None:
+                    # 没有可预见关键事件时，按请求时长推进，避免“原地空转”。
+                    actual_dt = requested_wait
+                    wait_reason = "no_future_event"
+                else:
+                    # 关键规则：wait 只推进到“下一个事件或请求时长”中更早者。
+                    actual_dt = min(requested_wait, next_event_delta)
+                    wait_reason = "next_event_capped" if int(next_event_delta) < requested_wait else "requested_duration"
+
+            assert  actual_dt > 0, f"actual_dt ({actual_dt}) should be positive"
+
+            t2 = t1 + actual_dt
             reward_result = self.calc_reward(t1, t2, detailed=detailed_reward)
-            self.time = t2
-            self._update_stay_times(5)
-            self._advance_cleaning_and_idle(5)
+            self.advance_time(actual_dt, event_reason=wait_reason)
             self._consecutive_wait_time += (t2 - t1)
+
+            # 停滞惩罚
             if self._consecutive_wait_time >= self.idle_timeout and not self._idle_penalty_applied:
                 self._idle_penalty_applied = True
                 if detailed_reward:
@@ -948,16 +951,12 @@ class PetriSingleDevice:
                     reward_result["total"] -= 5.0
                 else:
                     reward_result -= 5.0
-                self.time = t2
-                self._update_stay_times(dt)
-                self._advance_cleaning_and_idle(dt)
+                self.advance_time(dt, event_reason="illegal_action")
                 return False, reward_result, False
 
             t2 = t1 + self.ttime
             reward_result = self.calc_reward(t1, t2, detailed=detailed_reward)
-            self.time = t2
-            self._update_stay_times(self.ttime)
-            self._advance_cleaning_and_idle(self.ttime)
+            self.advance_time(self.ttime, event_reason="fire_transition")
             log_entry = self._fire(int(action), start_time=t1, end_time=t2)
             self.fire_log.append(log_entry)
 
@@ -982,6 +981,7 @@ class PetriSingleDevice:
                 self._per_wafer_reward = 0.0
 
         finish = len(self._get_place("LP_done").tokens) >= self.n_wafer
+        # ====== 违反驻留时间约束 ======
         is_scrap, scrap_info = self._check_scrap()
         if is_scrap:
             self.scrap_count += 1
@@ -993,35 +993,13 @@ class PetriSingleDevice:
             else:
                 reward_result -= float(self.R_scrap)
             if self.stop_on_scrap:
-                return True, reward_result, True
+                DONE = True
+                SCRAPE = True
+                return DONE, reward_result, SCRAPE
 
+        # ====== 死锁检测 =======
         stage1_enabled = self._get_enable_t_stage1()
         if not finish and self._is_deadlock_state(stage1_enabled):
-            # #region agent log
-            self._debug_log(
-                hypothesis_id="H4",
-                message="deadlock_triggered",
-                data={
-                    "time": int(self.time),
-                    "finish": bool(finish),
-                    "stage1_enabled": [self.id2t_name[idx] for idx in stage1_enabled],
-                    "stage2_enabled": [self.id2t_name[idx] for idx in self._apply_enable_stage2(stage1_enabled)],
-                    "lp_tokens": len(self._get_place("LP").tokens),
-                    "lp_done_tokens": len(self._get_place("LP_done").tokens),
-                    "d_tm_tokens": len(self._get_place("d_TM1").tokens),
-                    "pm_states": {
-                        p.name: {
-                            "tokens": len(p.tokens),
-                            "is_cleaning": bool(getattr(p, "is_cleaning", False)),
-                            "cleaning_remaining": int(getattr(p, "cleaning_remaining", 0)),
-                            "processed_wafer_count": int(getattr(p, "processed_wafer_count", 0)),
-                        }
-                        for p in self.marks
-                        if p.name.startswith("PM")
-                    },
-                },
-            )
-            # #endregion
             self.deadlock_count += 1
             self._last_deadlock = True
             deadlock_penalty = float(abs(self.R_scrap))
@@ -1030,15 +1008,19 @@ class PetriSingleDevice:
                 reward_result["total"] -= deadlock_penalty
             else:
                 reward_result -= deadlock_penalty
-            return True, reward_result, False
+            DONE = True
+            SCRAPE = False
+            return DONE, reward_result, SCRAPE
 
+        # ===== 任务完成奖励 ======
         if finish:
             if detailed_reward:
                 reward_result["finish_bonus"] += float(self.R_finish)
                 reward_result["total"] += float(self.R_finish)
             else:
                 reward_result += float(self.R_finish)
-        return bool(finish), reward_result, False
+            SCRAPE = False
+        return bool(finish), reward_result, SCRAPE
 
     def calc_wafer_statistics(self) -> Dict[str, Any]:
         system_times: List[float] = []

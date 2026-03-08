@@ -50,7 +50,7 @@ obs = [
 
 #### 动作空间（Action Space）
 
-**动作数量**：7（6 个变迁 + 1 个 WAIT）
+**动作数量**：11（6 个变迁 + 5 个 WAIT 档位）
 
 **变迁动作**（0-5）：
 
@@ -63,9 +63,20 @@ obs = [
 | 4    | `u_PM2_LP_done` | 从 PM2 卸载晶圆到完成位      |
 | 5    | `t_LP_done`     | 将晶圆装载到 LP_done（完成） |
 
-**WAIT 动作**（索引 6 = `net.T`）：时间推进 5 秒，不执行任何变迁。
+**WAIT 动作**（索引 6-10）：`WAIT_5s / WAIT_10s / WAIT_20s / WAIT_50s / WAIT_100s`。
+执行 WAIT 时采用分层规则：
 
-**动作掩码**：通过 `get_enable_t()` 计算当前可用的变迁（满足前置条件且容量未满），并在并发模型中返回 `(tm2_enabled, tm3_enabled)` 两个列表；WAIT 动作始终可用。
+- 当 `wait_duration == 5` 时固定推进 5 秒（不计算 `next_event_delta`）；
+- 当 `PM1/PM3/PM4` 任一加工腔室存在“加工完成待取片”晶圆（`stay_time >= processing_time`）时，大于 5 秒的 WAIT 在动作掩码中禁用；
+- 其余 WAIT 才执行 `actual_wait = min(wait_duration, next_event_delta)`。
+
+其中 `next_event_delta` 至少考虑：
+- 某加工腔室达到“加工完成”时刻；
+- 某清洗中的腔室达到“清洗完成”时刻。
+
+这样可避免一次跨越多个关键决策点。
+
+**动作掩码**：通过 `get_enable_t()` 计算当前可用变迁（满足前置条件且容量未满）；单设备下 WAIT 档位默认进入掩码，但当存在“加工完成待取片”晶圆（`PM1/PM3/PM4` 中有 token 满足 `stay_time >= processing_time`）时，仅保留 `WAIT_5s`。该规则由 `pn_single` 统一生成，`env_single` 与可视化仅消费掩码结果。
 
 **使能条件**：
 

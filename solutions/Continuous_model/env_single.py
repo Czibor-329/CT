@@ -63,7 +63,12 @@ class Env_PN_Single(EnvBase):
             config.single_proc_time_rand_max_scale = float(proc_time_rand_max_scale)
 
         self.net = PetriSingleDevice(config=config)
-        self.n_actions = self.net.T + 1  # 最后一个是 WAIT
+        # 与 pn_single 保持同一份 wait 档位来源，避免 env/net 两处规则漂移。
+        self.wait_durations = list(getattr(self.net, "wait_durations", [5]))
+        self.action_catalog = self._build_action_catalog()
+        self.n_actions = len(self.action_catalog)
+        self.wait_action_start = int(self.net.T)
+        self.wait_action_indices = list(range(self.wait_action_start, self.n_actions))
         self.n_wafer = config.n_wafer
         self.valid_pairs = self._build_valid_place_where_pairs()
         self.pair_to_idx = {pair: idx for idx, pair in enumerate(self.valid_pairs)}
@@ -74,6 +79,43 @@ class Env_PN_Single(EnvBase):
         if seed is None:
             seed = torch.empty((), dtype=torch.int64).random_().item()
         self.set_seed(seed)
+
+    @staticmethod
+    def _normalize_wait_durations(durations) -> List[int]:
+        values: List[int] = []
+        for raw in list(durations or []):
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                values.append(value)
+        if not values:
+            values = [5]
+        return sorted(set(values))
+
+    def _build_action_catalog(self) -> List[Tuple[str, int]]:
+        # 多档 wait 统一在动作目录里维护，避免在 if-else 中散落硬编码。
+        catalog: List[Tuple[str, int]] = [("transition", int(t)) for t in range(int(self.net.T))]
+        catalog.extend(("wait", int(duration)) for duration in self.wait_durations)
+        return catalog
+
+    def _decode_action(self, action: int) -> Tuple[str, int]:
+        if action < 0 or action >= len(self.action_catalog):
+            raise IndexError(f"invalid action index: {action}")
+        return self.action_catalog[int(action)]
+
+    def parse_wait_action(self, action: int) -> Optional[int]:
+        kind, value = self._decode_action(action)
+        if kind != "wait":
+            return None
+        return int(value)
+
+    def get_action_name(self, action: int) -> str:
+        kind, value = self._decode_action(action)
+        if kind == "wait":
+            return f"WAIT_{int(value)}s"
+        return self.net.id2t_name[int(value)]
 
     def _build_valid_place_where_pairs(self) -> List[Tuple[int, int]]:
         """
@@ -219,12 +261,17 @@ class Env_PN_Single(EnvBase):
             obs.extend([float(is_cleaning), clean_remaining_time_norm, remaining_runs_before_clean_norm])
         return np.array(obs, dtype=np.float32)
 
+    def get_enable_t(self) -> List[int]:
+        return [
+            int(a)
+            for a in self.net.get_enable_actions(wait_action_start=self.wait_action_start)
+        ]
+
     def _mask(self):
-        mask = np.zeros(self.n_actions, dtype=bool)
-        enabled = self.net.get_enable_t()
-        mask[enabled] = True
-        mask[self.net.T] = True
-        return mask
+        return self.net.get_action_mask(
+            wait_action_start=self.wait_action_start,
+            n_actions=self.n_actions,
+        )
 
     def _reset(self, td_params):
         self.net.reset()
@@ -232,10 +279,12 @@ class Env_PN_Single(EnvBase):
 
     def _step(self, tensordict=None):
         action = int(tensordict["action"].item())
-        if action == self.net.T:
-            done, reward_result, scrap = self.net.step(wait=True, with_reward=True, detailed_reward=self.detailed_reward)
+        wait_duration = self.parse_wait_action(action)
+        if wait_duration is not None:
+            done, reward_result, scrap = self.net.step(detailed_reward=self.detailed_reward,wait_duration=int(wait_duration))
         else:
-            done, reward_result, scrap = self.net.step(t=action, with_reward=True, detailed_reward=self.detailed_reward)
+            _, transition_idx = self._decode_action(action)
+            done, reward_result, scrap = self.net.step(a1=int(transition_idx), detailed_reward=self.detailed_reward)
         deadlock = bool(getattr(self.net, "_last_deadlock", False))
         reward = reward_result.get("total", 0.0) if isinstance(reward_result, dict) else float(reward_result)
         return TensorDict(

@@ -40,6 +40,10 @@ def _default_single_proc_time_rand_scale_map() -> Dict[str, Dict[str, float]]:
     }
 
 
+def _default_single_wait_durations() -> List[int]:
+    return [5, 10, 20, 50, 100]
+
+
 @dataclass
 class PetriEnvConfig:
     """
@@ -108,6 +112,8 @@ class PetriEnvConfig:
     single_proc_time_rand_scale_map: Dict[str, Dict[str, float]] = field(
         default_factory=_default_single_proc_time_rand_scale_map
     )
+    # 单设备 WAIT 动作档位（秒）
+    single_wait_durations: List[int] = field(default_factory=_default_single_wait_durations)
     # 兼容旧版统一随机区间（当 single_proc_time_rand_scale_map 缺失时回退使用）
     single_proc_time_rand_min_scale: float = 1.0
     single_proc_time_rand_max_scale: float = 1.0

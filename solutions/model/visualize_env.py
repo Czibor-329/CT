@@ -2055,13 +2055,9 @@ class PetriVisualizer:
     def step_action(self, action: int) -> Tuple[Dict, bool, bool, bool]:
         """执行动作并返回结果"""
         if action == self.net.T:
-            done, reward_dict, scrap = self.net.step(
-                wait=True, with_reward=True, detailed_reward=True
-            )
+            done, reward_dict, scrap = self.net.step(detailed_reward=True)
         else:
-            done, reward_dict, scrap = self.net.step(
-                t=action, wait=False, with_reward=True, detailed_reward=True
-            )
+            done, reward_dict, scrap = self.net.step(detailed_reward=True)
         
         if not isinstance(reward_dict, dict):
             reward_dict = {'total': reward_dict}

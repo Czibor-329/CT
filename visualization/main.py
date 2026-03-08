@@ -182,19 +182,8 @@ def load_model(model_path: str, adapter: PetriAdapter):
             try:
                 # 获取观察和动作掩码
                 obs = adapter.env._build_obs()
-                enabled_raw = adapter.net.get_enable_t()
-                if isinstance(enabled_raw, tuple):
-                    tm2_enabled, tm3_enabled = enabled_raw
-                    action_mask_indices = tm2_enabled + tm3_enabled
-                else:
-                    action_mask_indices = list(enabled_raw)
-                
-                # [DEBUG] Check mask indices
-                # print(f"[DEBUG] Mask indices: {action_mask_indices}")
-
-                action_mask = torch.zeros(n_actions, dtype=torch.bool)
-                action_mask[action_mask_indices] = True
-                action_mask[adapter.net.T] = True  # WAIT 动作
+                # 单设备多档 wait 下，直接复用 env 输出的离散动作掩码。
+                action_mask = torch.as_tensor(adapter.env._mask(), dtype=torch.bool)
                 
                 # 构建 TensorDict
                 # MaskedPolicyHead expects 'observation_f' (float) based on models.py

@@ -102,6 +102,8 @@ def _build_policy(env: Env_PN_Concurrent, model_path: Path, device: torch.device
 
 
 def _decode_single_action_name(env: Env_PN_Single | Env_PN_Single_PlaceObs, action_idx: int) -> str:
+    if hasattr(env, "get_action_name"):
+        return str(env.get_action_name(int(action_idx)))
     if action_idx == env.net.T:
         return "WAIT"
     return env.net.id2t_name[action_idx]

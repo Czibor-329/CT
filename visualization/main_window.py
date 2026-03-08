@@ -381,6 +381,7 @@ class PetriMainWindow(QMainWindow):
         self.viewmodel.auto_mode_changed.connect(self._on_auto_mode_changed_ui)
 
         self.right_panel.action_clicked.connect(self._on_action_clicked)
+        self.right_panel.wait_clicked.connect(self._on_wait_clicked)
         # self.right_panel.random_clicked.connect(self._on_random_clicked)  # Removed
         self.right_panel.model_step_clicked.connect(self._on_model_step_clicked)
         self.right_panel.model_auto_toggled.connect(self._on_model_auto_toggled)
@@ -403,8 +404,25 @@ class PetriMainWindow(QMainWindow):
         if self._device_mode == "single":
             # 单设备模式：展示“单设备全集变迁”，并通过 enabled 状态区分可点/禁用。
             # 避免仅显示使能动作时在加工等待阶段出现“空白无按钮”。
-            actions_for_panel = [a for a in state.enabled_actions if a.action_id >= 0 and a.action_name != "WAIT"]
+            actions_for_panel = [
+                a for a in state.enabled_actions
+                if a.action_id >= 0 and not str(a.action_name).upper().startswith("WAIT")
+            ]
         self.right_panel.update_actions(actions_for_panel)
+        if self._device_mode == "single" and hasattr(self.viewmodel.adapter, "env"):
+            wait_durations = list(getattr(self.viewmodel.adapter.env, "wait_durations", [5]))
+            wait_enabled_map = {}
+            for action in state.enabled_actions:
+                action_name = str(getattr(action, "action_name", ""))
+                if not action_name.upper().startswith("WAIT_"):
+                    continue
+                wait_text = action_name.removeprefix("WAIT_").removesuffix("s")
+                try:
+                    wait_duration = int(wait_text)
+                except ValueError:
+                    continue
+                wait_enabled_map[wait_duration] = bool(getattr(action, "enabled", False))
+            self.right_panel.set_wait_durations(wait_durations, enabled_map=wait_enabled_map)
 
     def _on_done_changed(self, done: bool) -> None:
         if done:
@@ -415,9 +433,25 @@ class PetriMainWindow(QMainWindow):
             self._stop_verification_mode()
             self.right_panel.verify_button.setEnabled(False)
 
-        if action_id == -100:
-            action_id = self.viewmodel.adapter.action_space_size
         self.viewmodel.execute_action(action_id)
+
+    def _on_wait_clicked(self, wait_duration: int) -> None:
+        if self._verification_active:
+            self._stop_verification_mode()
+            self.right_panel.verify_button.setEnabled(False)
+
+        action_id = self.viewmodel.adapter.action_space_size
+        if self._device_mode == "single" and hasattr(self.viewmodel.adapter, "env"):
+            env = self.viewmodel.adapter.env
+            for idx in range(int(getattr(env, "n_actions", 0))):
+                parse_fn = getattr(env, "parse_wait_action", None)
+                if parse_fn is None:
+                    continue
+                parsed = parse_fn(idx)
+                if parsed == int(wait_duration):
+                    action_id = int(idx)
+                    break
+        self.viewmodel.execute_action(int(action_id))
 
     # _on_random_clicked removed
 
@@ -629,7 +663,12 @@ class PetriMainWindow(QMainWindow):
     def keyPressEvent(self, event) -> None:
         key = event.key()
         if key == Qt.Key.Key_W:
-            self._on_action_clicked(self.viewmodel.adapter.action_space_size)
+            default_wait = 5
+            if self._device_mode == "single" and hasattr(self.viewmodel.adapter, "env"):
+                wait_durations = list(getattr(self.viewmodel.adapter.env, "wait_durations", [5]))
+                if wait_durations:
+                    default_wait = int(min(wait_durations))
+            self._on_wait_clicked(default_wait)
         # elif key == Qt.Key.Key_R: self._on_random_clicked() # Removed
         elif key == Qt.Key.Key_M:
             self._on_model_step_clicked()
@@ -747,7 +786,23 @@ class PetriMainWindow(QMainWindow):
                 if action_name is None:
                     raise ValueError("当前为单设备模式，序列缺少 action（或 actions[0]）字段")
 
-                if action_name == "WAIT":
+                if isinstance(action_name, str) and action_name.startswith("WAIT_") and action_name.endswith("s"):
+                    wait_text = action_name.removeprefix("WAIT_").removesuffix("s")
+                    action_id = int(self.viewmodel.adapter.action_space_size)
+                    try:
+                        wait_duration = int(wait_text)
+                        if hasattr(self.viewmodel.adapter, "env"):
+                            env = self.viewmodel.adapter.env
+                            for idx in range(int(getattr(env, "n_actions", 0))):
+                                parse_fn = getattr(env, "parse_wait_action", None)
+                                if parse_fn is None:
+                                    continue
+                                if parse_fn(idx) == wait_duration:
+                                    action_id = int(idx)
+                                    break
+                    except ValueError:
+                        pass
+                elif action_name == "WAIT":
                     action_id = int(self.viewmodel.adapter.action_space_size)
                 else:
                     action_id = all_transitions.index(action_name)

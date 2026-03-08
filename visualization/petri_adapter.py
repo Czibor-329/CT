@@ -70,19 +70,9 @@ class PetriAdapter(AlgorithmAdapter):
             a1, a2 = action
             tm2_action = None if a1 == -1 else a1
             tm3_action = None if a2 == -1 else a2
-            result = self.net.step(
-                a1=tm2_action,
-                a2=tm3_action,
-                with_reward=True,
-                detailed_reward=True,
-            )
+            result = self.net.step(a1=tm2_action, detailed_reward=True)
         else:
-            result = self.net.step(
-                t=action if action < self.net.T else None,
-                wait=(action == self.net.T),
-                with_reward=True,
-                detailed_reward=True,
-            )
+            result = self.net.step(detailed_reward=True)
 
         # pn.py: (done, reward_result, scrap)
         done = bool(result[0])

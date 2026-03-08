@@ -33,11 +33,13 @@ class PetriSingleAdapter(AlgorithmAdapter):
 
     def step(self, action: int | Tuple[int, int]):
         if isinstance(action, tuple):
-            action = action[0] if action[0] != -1 else self.net.T
-        if action == self.net.T:
-            done, reward_result, scrap = self.net.step(wait=True, with_reward=True, detailed_reward=True)
+            action = int(action[0]) if action[0] != -1 else int(self.action_space_size)
+        wait_duration = self.env.parse_wait_action(int(action))
+        if wait_duration is not None:
+            done, reward_result, scrap = self.net.step(detailed_reward=True, wait_duration=int(wait_duration))
         else:
-            done, reward_result, scrap = self.net.step(t=action, with_reward=True, detailed_reward=True)
+            _, transition_idx = self.env._decode_action(int(action))
+            done, reward_result, scrap = self.net.step(a1=int(transition_idx), detailed_reward=True)
 
         reward = float(reward_result.get("total", 0.0)) if isinstance(reward_result, dict) else float(reward_result)
         self._last_reward_detail = (
@@ -58,8 +60,9 @@ class PetriSingleAdapter(AlgorithmAdapter):
         return state, reward, bool(done), info
 
     def get_action_name(self, action: int) -> str:
-        if action == self.net.T:
-            return "WAIT"
+        wait_duration = self.env.parse_wait_action(int(action))
+        if wait_duration is not None:
+            return f"WAIT_{int(wait_duration)}s"
         if 0 <= action < len(self.net.id2t_name):
             name = self.net.id2t_name[action]
             if name.startswith("u_"):
@@ -84,18 +87,17 @@ class PetriSingleAdapter(AlgorithmAdapter):
         return f"UNKNOWN_{action}"
 
     def get_enabled_actions(self) -> List[ActionInfo]:
-        enabled = set(self.net.get_enable_t())
+        mask = self.env._mask()
         actions: List[ActionInfo] = []
-        for i, name in enumerate(self.net.id2t_name):
+        for i in range(int(self.env.n_actions)):
             actions.append(
                 ActionInfo(
                     action_id=i,
                     action_name=self.get_action_name(i),
-                    enabled=(i in enabled),
-                    description="" if i in enabled else "当前条件不满足",
+                    enabled=bool(mask[i]),
+                    description="" if bool(mask[i]) else "当前条件不满足",
                 )
             )
-        actions.append(ActionInfo(action_id=self.net.T, action_name="WAIT", enabled=True, description=""))
         return actions
 
     def get_reward_breakdown(self) -> Dict[str, float]:
@@ -103,7 +105,7 @@ class PetriSingleAdapter(AlgorithmAdapter):
 
     @property
     def action_space_size(self) -> int:
-        return int(self.net.T)
+        return int(self.env.wait_action_indices[0]) if self.env.wait_action_indices else int(self.net.T)
 
     def get_current_state(self) -> StateInfo:
         return self._collect_state_info()

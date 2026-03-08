@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
@@ -25,6 +25,7 @@ class ControlPanel(QWidget):
     """控制按钮面板"""
 
     action_clicked = Signal(int)
+    wait_clicked = Signal(int)
     # random_clicked removed
     model_step_clicked = Signal()
     model_auto_toggled = Signal(bool)
@@ -65,8 +66,15 @@ class ControlPanel(QWidget):
 
         self.wait_button = QPushButton("WAIT (W)")
         self.wait_button.setObjectName("WaitButton")
-        self.wait_button.clicked.connect(lambda: self.action_clicked.emit(-100))
         layout.addWidget(self.wait_button)
+        self.wait_button.hide()
+
+        self.wait_buttons_row = QHBoxLayout()
+        self.wait_buttons_row.setSpacing(4)
+        layout.addLayout(self.wait_buttons_row)
+        self.wait_buttons: List[QPushButton] = []
+        self._wait_durations: List[int] = []
+        self.set_wait_durations([5, 10, 20, 50, 100])
 
         # Random button removed
 
@@ -196,6 +204,15 @@ class ControlPanel(QWidget):
         #WaitButton:hover {{
             background-color: rgba{(*t.btn_wait, 0.2)};
         }}
+        #WaitSmallButton {{
+            border-color: rgb{t.btn_wait};
+            min-height: 24px;
+            padding: 2px 6px;
+            font-size: 11px;
+        }}
+        #WaitSmallButton:hover {{
+            background-color: rgba{(*t.btn_wait, 0.2)};
+        }}
         
         /* RandomButton removed */
         
@@ -270,7 +287,7 @@ class ControlPanel(QWidget):
         for action in actions:
             if action.action_id < 0:
                 continue
-            if action.action_name == "WAIT":
+            if str(action.action_name).upper().startswith("WAIT"):
                 continue
             btn = QPushButton(action.action_name)
             btn.setEnabled(action.enabled)
@@ -280,6 +297,37 @@ class ControlPanel(QWidget):
             btn.clicked.connect(lambda _=False, a=action.action_id: self.action_clicked.emit(a))
             self.transition_group.addWidget(btn)
             self.buttons.append(btn)
+
+    def set_wait_durations(
+        self,
+        durations: List[int],
+        enabled_map: Optional[Dict[int, bool]] = None,
+    ) -> None:
+        while self.wait_buttons_row.count():
+            item = self.wait_buttons_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.wait_buttons.clear()
+
+        normalized = sorted({int(d) for d in durations if int(d) > 0})
+        if not normalized:
+            normalized = [5]
+        self._wait_durations = normalized
+
+        for i, duration in enumerate(self._wait_durations):
+            text = f"W{duration}"
+            if i == 0:
+                text = f"{text} (W)"
+            btn = QPushButton(text)
+            btn.setObjectName("WaitSmallButton")
+            is_enabled = True
+            if enabled_map is not None:
+                is_enabled = bool(enabled_map.get(int(duration), False))
+            btn.setEnabled(is_enabled)
+            btn.setToolTip(f"等待 {duration}s" if is_enabled else "当前不满足条件")
+            btn.clicked.connect(lambda _=False, d=duration: self.wait_clicked.emit(int(d)))
+            self.wait_buttons_row.addWidget(btn)
+            self.wait_buttons.append(btn)
 
     def set_auto_active(self, active: bool) -> None:
         self.auto_active = active
