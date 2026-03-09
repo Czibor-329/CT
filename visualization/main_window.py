@@ -596,7 +596,7 @@ class PetriMainWindow(QMainWindow):
             border-radius: 0px;
             color: rgb{t.text_secondary};
             font-family: "{sp.font_family}";
-            font-size: {sp.release_font_pt}pt;
+            font-size: {sp.label_font_pt}pt;
             padding: 8px;
             selection-background-color: rgb{t.accent_cyan};
         }}

@@ -140,10 +140,7 @@ class StatsPanel(QWidget):
         # 6. REWARDS 区块（固定高度，只显示非零项）
         self._create_rewards_section()
         
-        # 7. RELEASE TIME 区域
-        self._create_release_section()
-        
-        # 8. HISTORY 区域
+        # 7. HISTORY 区域
         self._create_history_section()
         
         # 弹性空间
@@ -310,25 +307,6 @@ class StatsPanel(QWidget):
         
         self.main_layout.addWidget(self.rewards_container)
 
-    def _create_release_section(self) -> None:
-        p = ui_params.stats_panel
-        
-        header = SectionHeader("RELEASE")
-        self.main_layout.addWidget(header)
-        
-        # 使用 QFrame + VBoxLayout 替代 QTextEdit (与 REWARDS 保持一致)
-        self.release_container = QFrame()
-        self.release_container.setObjectName("ReleaseContainer")
-        self.release_container.setFixedHeight(p.release_fixed_height)
-        
-        self.release_layout = QVBoxLayout(self.release_container)
-        self.release_layout.setContentsMargins(p.summary_frame_padding, 6, 
-                                               p.summary_frame_padding, 6)
-        self.release_layout.setSpacing(p.release_item_spacing)
-        self.release_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
-        self.main_layout.addWidget(self.release_container)
-
     def _create_history_section(self) -> None:
         p = ui_params.stats_panel
         
@@ -400,7 +378,7 @@ class StatsPanel(QWidget):
             border-radius: 0px;
         }}
         
-        #MetricRow, #RewardsContainer, #ReleaseContainer, #HistoryContainer {{
+        #MetricRow, #RewardsContainer, #HistoryContainer {{
             background-color: rgb{t.bg_deep};
             border: 1px solid rgb{t.border_muted};
             border-radius: 0px;
@@ -423,7 +401,7 @@ class StatsPanel(QWidget):
             background-color: transparent;
         }}
         
-        /* 统一列表项样式类 (Release / History / Rewards) */
+        /* 统一列表项样式类 (History / Rewards) */
         .PanelItem {{
             font-family: "{p.font_family}";
             background: transparent;
@@ -443,7 +421,6 @@ class StatsPanel(QWidget):
                      trend_data: Dict[str, List[float]] | None = None) -> None:
         self._update_metrics(state)
         self._update_summary(state)
-        self._update_release_schedule(state)
         self._update_history(action_history)
 
     def update_reward(self, total_reward: float, detail: Dict[str, float]) -> None:
@@ -613,48 +590,6 @@ class StatsPanel(QWidget):
         
         self.tm2_row.set_data("TM2", format_chamber(tm2_stats))
         self.tm3_row.set_data("TM3", format_chamber(tm3_stats))
-
-    def _update_release_schedule(self, state: StateInfo) -> None:
-        p = ui_params.stats_panel
-        
-        # 清理旧内容
-        while self.release_layout.count():
-            item = self.release_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        schedule = state.stats.get("release_schedule", {})
-        if not schedule:
-            empty = QLabel("—")
-            empty.setStyleSheet(f"font-size: {p.release_font_pt}pt; color: rgb{self.theme.text_muted};")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.release_layout.addWidget(empty)
-            return
-
-        for place_name, items in schedule.items():
-            if not items:
-                continue
-            
-            # 格式: "PlaceName: 101→10, 102→20..."
-            pairs = ", ".join([f"{tid}→{rt}" for tid, rt in items])
-            line_text = f"{place_name}: {pairs}"
-            
-            label = QLabel(line_text)
-            label.setProperty("class", "PanelItem")
-            # 使用 QSS class + 内联样式补充特定字号/颜色
-            label.setStyleSheet(f"""
-                font-size: {p.release_font_pt}pt;
-                color: rgb{self.theme.text_secondary};
-                font-weight: 600;
-            """)
-            # 单行截断
-            # label.setWordWrap(False) # 默认 False
-            
-            # 手动实现简单的 Elide 效果需配合固定宽度或 Paint，
-            # 或直接设置 ToolTip 显示全文
-            label.setToolTip(line_text)
-            
-            self.release_layout.addWidget(label)
 
     def _update_history(self, action_history: List[Dict[str, Any]]) -> None:
         p = ui_params.stats_panel

@@ -33,7 +33,7 @@ class MainWindowParams:
 
 @dataclass
 class StatsPanelParams:
-    """左侧统计面板：KPI 仪表盘、摘要、RELEASE TIME、HISTORY。"""
+    """左侧统计面板：KPI 仪表盘、摘要、REWARDS、HISTORY。"""
 
     # ───────── 布局间距 ─────────
     layout_spacing: int = 12         # 整体垂直间距
@@ -56,7 +56,6 @@ class StatsPanelParams:
     summary_key_font_pt: int = 10    # 摘要 Key 字号（System下卡片 avg max字号）
     summary_value_font_pt: int = 11  # 摘要 Value 字号
     toolbox_tab_font_pt: int = 12    # GroupBox 标题
-    release_font_pt: int = 12        # RELEASE TIME
     history_font_pt: int = 12        # HISTORY
     reward_detail_font_pt: int = 12  # REWARD 明细
     
@@ -70,18 +69,14 @@ class StatsPanelParams:
     progress_label_spacing: int = 4  # 进度条与标签间距
     
     # ───────── 固定高度区域 ─────────
-    release_fixed_height: int = 80   # RELEASE TIME 固定高度
-    history_fixed_height: int = 100  # HISTORY 固定高度
-    history_line_count: int = 4      # HISTORY 显示最近 N 条
+    history_fixed_height: int = 160  # HISTORY 固定高度
+    history_line_count: int = 8      # HISTORY 显示最近 N 条
     
     # ───────── Rewards 区块参数 ─────────
-    rewards_fixed_height: int = 100  # REWARDS 区块固定高度 (px)
-    rewards_max_items: int = 6       # REWARDS 最多显示条目数
+    rewards_fixed_height: int = 160   # REWARDS 区块固定高度 (px)
+    rewards_max_items: int = 10       # REWARDS 最多显示条目数
     rewards_item_font_pt: int = 12   # REWARDS 条目字号
     rewards_item_spacing: int = 2    # REWARDS 条目行间距
-    
-    # ───────── Release 区块参数 ─────────
-    release_item_spacing: int = 2    # Release 条目行间距
     
     # ───────── History 区块参数 ─────────
     history_item_spacing: int = 2    # History 条目行间距
