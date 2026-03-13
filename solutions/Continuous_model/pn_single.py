@@ -341,7 +341,7 @@ class ClusterTool:
         self._chamber_active = {name: {} for name in self._timeline_chambers}
         self._init_cleaning_state()
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
-        self._update_marking_vector()
+        self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
         return None, self.get_enable_t()
 
     def calc_reward(self, t1: int, t2: int, detailed: bool = False):
@@ -455,7 +455,10 @@ class ClusterTool:
 
         tok.where = int(getattr(tok, "where", 0)) + 1
         pst_place.append(tok)
-        self._update_marking_vector()
+        pre_place_idx = int(pre_places[0])
+        pst_place_idx = int(pst_places[0])
+        self.m[pre_place_idx] -= 1
+        self.m[pst_place_idx] += 1
         return {
             "t_name": t_name,
             "t1": int(start_time),
@@ -464,8 +467,6 @@ class ClusterTool:
         }
 
     def get_enable_t(self) -> List[int]:
-        self._update_marking_vector()
-
         """
         Stage1: 基础使能（pre/pst + 容量 + 防死锁规则），不做“加工完成”就绪检查。
         """
@@ -566,7 +567,6 @@ class ClusterTool:
         返回使能动作列表及不使能动作及原因。
         仅在评估模式下被调用，避免训练时额外开销。
         """
-        self._update_marking_vector()
         start = int(self.T if wait_action_start is None else wait_action_start)
 
         d_tm = self._get_place("d_TM1") if ("d_TM1" in self.id2p_name and self.device_mode != "cascade") else None
@@ -799,9 +799,6 @@ class ClusterTool:
         if target in {"PM1", "PM2", "PM3", "PM4", "PM5", "PM6", "LLD"}:
             return "d_TM3"
         return "d_TM2"
-
-    def _update_marking_vector(self) -> None:
-        self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
 
     def _update_stay_times(self, dt: int) -> None:
         if dt <= 0:
