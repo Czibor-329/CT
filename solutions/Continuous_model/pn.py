@@ -280,9 +280,6 @@ class Petri:
         # 错峰启动：记录 t_PM1 上次发射时间
         self._last_t_pm1_fire_time = -INF
         
-        # 兼容保留：训练脚本仍可能切换该开关；在线阶段已不再施加释放惩罚
-        self.no_release_penalty = False
-        
         # 腔室实际占用时间线（事后追责用，_fire 中实时填充）
         # _chamber_timeline[chamber] = [(enter_time, leave_time, wafer_id), ...]
         # enter: t_sX 的 t2；leave: u_sX_* 的 t1（尚未离开时为 None）

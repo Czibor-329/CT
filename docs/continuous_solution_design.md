@@ -135,7 +135,7 @@ flowchart TB
 ### Impact
 - 设备模式统一为 `--device single/cascade`，可视化 `cascade` 不再依赖 `pn.py`，统一走 `pn_single/env_single`。
 - 单设备逻辑集中在 `Continuous_model` 新文件中，便于后续独立迭代。
-- 单设备训练已支持两阶段：阶段1收集轨迹（关闭在线 release 惩罚），阶段2执行 `blame_release_violations` 回填奖励。
+- 单设备训练已支持两阶段：阶段1收集轨迹（step 不施加 release 惩罚），阶段2执行 `blame_release_violations` 回填奖励。
 - 训练入口 `train_single.py` 仅保留随机开关参数：`--proc-time-rand-enabled`。开启后按配置中的随机区间执行（不再提供 CLI 最小/最大覆盖）。
 - 单设备训练权重保存格式与并发训练统一：保存 `policy_module.state_dict()`（不再仅保存 backbone）。
 - 单设备动作 ID 与旧版 `u_src_dst` 不再一一对应；历史动作序列与旧策略权重需重训或显式映射迁移。

@@ -65,7 +65,7 @@ def collect_rollout_single(
 ):
     """
     两阶段采样：
-    1) no_release_penalty=True 收集轨迹
+    1) 收集轨迹（step 不施加 release 惩罚）
     2) episode 结束后 blame_release_violations 回填奖励
     """
     data = {
@@ -84,7 +84,6 @@ def collect_rollout_single(
         "next_observation_f": [],
     }
 
-    env.net.no_release_penalty = True
     fire_log_ranges = []
     td = env.reset()
     second_pass_events = 0
@@ -139,7 +138,6 @@ def collect_rollout_single(
         else:
             td = _to_next_state(td_next)
 
-    env.net.no_release_penalty = False
     rollout = TensorDict({k: torch.stack(v) for k, v in data.items()}, batch_size=[n_steps])
     return rollout, second_pass_events
 

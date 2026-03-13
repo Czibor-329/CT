@@ -171,7 +171,6 @@ class ClusterTool:
                 source: pair[0] for source, pair in self._single_round_robin_pairs.items()
             }
         self._last_deadlock = False
-        self.no_release_penalty = False
         self._chamber_timeline: Dict[str, list] = {name: [] for name in self._timeline_chambers}
         self._chamber_active: Dict[str, Dict[int, int]] = {name: {} for name in self._timeline_chambers}
         self._init_cleaning_state()
@@ -269,18 +268,6 @@ class ClusterTool:
             self._check_qtime_violation()
             log_entry = self._fire(int(action), start_time=t1, end_time=t2)
             self.fire_log.append(log_entry)
-
-            # 在线 release 惩罚通道（两阶段训练第一阶段会关闭 no_release_penalty）
-            if not self.no_release_penalty and self.reward_config.get("release_violation_penalty", 1):
-                latest_idx = len(self.fire_log) - 1
-                blame = self.blame_release_violations()
-                if latest_idx in blame:
-                    pen = float(blame[latest_idx])
-                    if detailed_reward:
-                        reward_result["release_violation_penalty"] = -pen
-                        reward_result["total"] -= pen
-                    else:
-                        reward_result -= pen
 
             if self._per_wafer_reward > 0:
                 if detailed_reward:

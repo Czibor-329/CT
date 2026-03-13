@@ -184,46 +184,42 @@ def run_sequence(sequence_path: Path, results_dir: Path) -> Path:
     fire_log_ranges: list[tuple[int, int]] = []
     tracked_u_llc_step_indices: list[int] = []
 
-    env.net.no_release_penalty = True
-    try:
-        for idx, item in enumerate(seq):
-            actions = item.get("actions", [])
-            action_name = actions[0] if len(actions) > 0 else item.get("action")
-            action_idx = _single_action_index(env, action_name)
+    for idx, item in enumerate(seq):
+        actions = item.get("actions", [])
+        action_name = actions[0] if len(actions) > 0 else item.get("action")
+        action_idx = _single_action_index(env, action_name)
 
-            mask = td["action_mask"]
-            if not bool(mask[action_idx].item()):
-                raise RuntimeError(f"第 {idx+1} 步动作不可用: {_normalize_action_name(action_name)}")
+        mask = td["action_mask"]
+        if not bool(mask[action_idx].item()):
+            raise RuntimeError(f"第 {idx+1} 步动作不可用: {_normalize_action_name(action_name)}")
 
-            fire_start = len(env.net.fire_log)
+        fire_start = len(env.net.fire_log)
 
-            step_td = td.clone()
-            step_td["action"] = torch.tensor(action_idx, dtype=torch.int64)
-            td_next = env.step(step_td)
+        step_td = td.clone()
+        step_td["action"] = torch.tensor(action_idx, dtype=torch.int64)
+        td_next = env.step(step_td)
 
-            fire_end = len(env.net.fire_log)
-            fire_log_ranges.append((fire_start, fire_end))
+        fire_end = len(env.net.fire_log)
+        fire_log_ranges.append((fire_start, fire_end))
 
-            reward_before, terminated, sim_time = _extract_step_result(td_next)
-            normalized_action = _normalize_action_name(action_name)
-            records.append(
-                {
-                    "step": idx + 1,
-                    "time": sim_time,
-                    "action": normalized_action,
-                    "reward_before_second_pass": reward_before,
-                    "reward_after_second_pass": reward_before,
-                    "second_pass_penalties": [],
-                    "terminated": terminated,
-                }
-            )
+        reward_before, terminated, sim_time = _extract_step_result(td_next)
+        normalized_action = _normalize_action_name(action_name)
+        records.append(
+            {
+                "step": idx + 1,
+                "time": sim_time,
+                "action": normalized_action,
+                "reward_before_second_pass": reward_before,
+                "reward_after_second_pass": reward_before,
+                "second_pass_penalties": [],
+                "terminated": terminated,
+            }
+        )
 
-            if normalized_action == "u_LLC":
-                tracked_u_llc_step_indices.append(idx)
+        if normalized_action == "u_LLC":
+            tracked_u_llc_step_indices.append(idx)
 
-            td = _to_next_state(td_next)
-    finally:
-        env.net.no_release_penalty = False
+        td = _to_next_state(td_next)
 
     blame = env.net.blame_release_violations()
     fire_indices = sorted(int(k) for k in blame.keys())

@@ -97,7 +97,6 @@ def collect_rollout(env: Env_PN_Concurrent, policy_module: DualActionPolicyModul
     }
     
     # ========== 第一阶段：无约束跑完 ==========
-    env.net.no_release_penalty = True
     
     # 追踪每个 rollout step 对应的 fire_log 范围
     fire_log_ranges = []  # [(start_idx, end_idx), ...] 每个 step 对应的 fire_log 索引范围
@@ -185,9 +184,6 @@ def collect_rollout(env: Env_PN_Concurrent, policy_module: DualActionPolicyModul
                 td = td_next["next"].clone()
             else:
                 td = td_next.clone()
-    
-    # 恢复释放惩罚模式
-    env.net.no_release_penalty = False
     
     # 转换为 TensorDict
     return TensorDict({

@@ -131,9 +131,8 @@ class BasedToken:
 - 清洗事件日志会附加写入 `fire_log`（`event_type=cleaning_start|cleaning_end`），用于后续追责/复盘。
 - `calc_wafer_statistics()`：返回统计字典（供可视化左栏读取）
 
-**两阶段训练相关字段**
-- `no_release_penalty: bool`：第一阶段采样时置 `True`，第二阶段回填惩罚时置 `False`
-- `_chamber_timeline/_chamber_active`：按路径代号记录加工腔体进入离开时间线（`code=0` 为 PM1/PM3/PM4；`code=1` 额外包含 PM6）
+**事后追责相关字段**
+- `_chamber_timeline/_chamber_active`：按路径代号记录加工腔体进入离开时间线（`code=0` 为 PM1/PM3/PM4；`code=1` 额外包含 PM6），供 episode 结束后 `blame_release_violations` 使用
 
 **设备模式字段**
 - `single_device_mode`: `single` 或 `cascade`。
