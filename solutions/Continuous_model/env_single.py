@@ -25,7 +25,7 @@ class Env_PN_Single(EnvBase):
         self,
         device: str = "cpu",
         seed=None,
-        detailed_reward: bool = False,
+        eval_mode: bool = False,
         device_mode: str = "single",
         reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
@@ -33,9 +33,10 @@ class Env_PN_Single(EnvBase):
         process_time_map: Optional[Dict[str, int]] = None,
         proc_time_rand_enabled: Optional[bool] = None,
         proc_time_rand_scale_map: Optional[Dict[str, Dict[str, float]]] = None,
+        detailed_reward: bool = False,  # 已弃用，保留以兼容旧调用，不再使用
     ):
         super().__init__(device=device)
-        self.detailed_reward = detailed_reward
+        self.eval_mode = eval_mode
 
         dir = Path(__file__).parents[2] / "data" / "petri_configs"
         mode_name = str(device_mode).lower()
@@ -70,6 +71,7 @@ class Env_PN_Single(EnvBase):
         self.wait_action_indices = list(range(self.wait_action_start, self.n_actions))
         self.n_wafer = config.n_wafer
         self._make_spec()
+        self._last_action_enable_info: dict = {}
         self._last_reward_detail: dict = {}
         if seed is None:
             seed = torch.empty((), dtype=torch.int64).random_().item()
@@ -384,25 +386,42 @@ class Env_PN_Single(EnvBase):
 
     def _reset(self, td_params):
         self.net.reset()
+        self._last_action_enable_info = {}
         self._last_reward_detail = {}
+        if self.eval_mode:
+            self.net.eval()
+        else:
+            self.net.train()
         return self._build_state_td(self._build_obs(), self._mask(), self.net.time)
 
     def _step(self, tensordict=None):
         action = int(tensordict["action"].item())
+        if self.eval_mode:
+            self._last_action_enable_info = self.net.get_enable_actions_with_reasons(
+                wait_action_start=self.wait_action_start
+            )
         wait_duration = self.parse_wait_action(action)
+        use_detailed_reward = self.eval_mode
         if wait_duration is not None:
-            done, reward_result, scrap = self.net.step(detailed_reward=self.detailed_reward,wait_duration=int(wait_duration))
+            done, reward_result, scrap = self.net.step(
+                wait_duration=int(wait_duration), detailed_reward=use_detailed_reward
+            )
         else:
             _, transition_idx = self._decode_action(action)
-            done, reward_result, scrap = self.net.step(a1=int(transition_idx), detailed_reward=self.detailed_reward)
+            done, reward_result, scrap = self.net.step(
+                a1=int(transition_idx), detailed_reward=use_detailed_reward
+            )
         deadlock = bool(getattr(self.net, "_last_deadlock", False))
-        reward = reward_result.get("total", 0.0) if isinstance(reward_result, dict) else float(reward_result)
-        reward_detail: dict = {}
-        if self.detailed_reward and isinstance(reward_result, dict):
-            for key in ("scrap_penalty", "release_violation_penalty", "idle_timeout_penalty"):
-                v = reward_result.get(key, 0)
-                if isinstance(v, (int, float)) and v != 0:
-                    reward_detail[key] = float(v)
+        reward = float(reward_result) if not isinstance(reward_result, dict) else float(reward_result.get("total", 0.0))
+        if self.eval_mode and isinstance(reward_result, dict):
+            detail = {}
+            for k, v in reward_result.items():
+                if isinstance(v, (int, float)):
+                    detail[k] = float(v)
+                elif isinstance(v, dict) and k == "scrap_info":
+                    detail[k] = v
+            self._last_reward_detail = detail
+
         out = TensorDict(
             {
                 "observation": torch.as_tensor(self._build_obs(), dtype=torch.float32),
@@ -416,10 +435,6 @@ class Env_PN_Single(EnvBase):
             },
             batch_size=[],
         )
-        if reward_detail:
-            out["reward_detail"] = reward_detail
-        # 绕过 TorchRL step 对非 spec 键的过滤，供 export 直接读取
-        self._last_reward_detail = reward_detail
         return out
 
     def _set_seed(self, seed: int | None):

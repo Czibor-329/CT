@@ -56,6 +56,7 @@ def build_adapter(
     robot_capacity: int = 1,
     route_code: int | None = None,
     env_overrides: dict | None = None,
+    step_verbose: bool = True,
 ):
     if adapter_name != "petri":
         raise ValueError(f"不支持的适配器: {adapter_name}")
@@ -72,7 +73,7 @@ def build_adapter(
         or env_overrides.get("single_proc_time_rand_enabled"),
         proc_time_rand_scale_map=env_overrides.get("single_proc_time_rand_scale_map"),
     )
-    return PetriSingleAdapter(env)
+    return PetriSingleAdapter(env, step_verbose=step_verbose)
 
 
 
@@ -335,6 +336,7 @@ def main() -> int:
     parser.add_argument("--model", "-m", type=str, help="模型文件路径")
     parser.add_argument("--no-model", action="store_true", help="不加载模型")
     parser.add_argument("--debug", action="store_true", help="显示变迁按钮（用于调试）")
+    parser.add_argument("--quiet", "-q", action="store_true", help="关闭每步使能/奖励的后台打印")
     args = parser.parse_args()
     selected_device = args.device_mode if args.device_mode else args.device
 
@@ -346,6 +348,7 @@ def main() -> int:
         device_mode=selected_device,
         robot_capacity=1,
         route_code=args.single_route_code,
+        step_verbose=not args.quiet,
     )
     viewmodel = PetriViewModel(adapter)
 
@@ -362,6 +365,7 @@ def main() -> int:
             robot_capacity=robot_capacity,
             route_code=args.single_route_code,
             env_overrides=env_overrides,
+            step_verbose=not args.quiet,
         )
     )
     if selected_device in {"single", "cascade"}:

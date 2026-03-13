@@ -29,6 +29,20 @@ CHAMBER = 1
 DELIVERY_ROBOT = 2
 SOURCE = 3
 
+# 动作不使能原因的人性化描述（用于 Markdown 报告）
+REASON_DESC: Dict[str, str] = {
+    "pre_color_mismatch": "前置颜色/路径约束不满足",
+    "insufficient_tokens": "库所 token 不足",
+    "capacity_exceeded": "容量超限",
+    "locked_by_arm2_head": "双臂模式：来源被队首晶圆目标锁定",
+    "no_receiving_target": "下游无可接收腔室",
+    "wrong_destination": "与队首晶圆目标不一致",
+    "process_not_ready": "腔室加工未完成",
+    "target_cleaning": "目标腔室清洗中",
+    "dwell_time_not_met": "运输位停留时间未满足",
+    "has_ready_wafer_restrict_wait": "有待取晶圆，仅允许短等待",
+}
+
 
 class ClusterTool:
     def __init__(self, config: PetriEnvConfig = None) -> None:
@@ -161,7 +175,15 @@ class ClusterTool:
         self._chamber_timeline: Dict[str, list] = {name: [] for name in self._timeline_chambers}
         self._chamber_active: Dict[str, Dict[int, int]] = {name: {} for name in self._timeline_chambers}
         self._init_cleaning_state()
-        self.train = True
+        self._training = True
+
+    def train(self):
+        """训练模式"""
+        self._training = True
+
+    def eval(self):
+        """评估模式"""
+        self._training = False
 
     def step(self, a1=None, detailed_reward: bool = False, wait_duration: Optional[int] = None):
         """
@@ -536,13 +558,118 @@ class ClusterTool:
             stage2_enabled.append(t)
         return stage2_enabled
 
-    def train(self):
-        """训练模式"""
-        self.train = True
+    def get_enable_actions_with_reasons(
+        self,
+        wait_action_start: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        返回使能动作列表及不使能动作及原因。
+        仅在评估模式下被调用，避免训练时额外开销。
+        """
+        self._update_marking_vector()
+        start = int(self.T if wait_action_start is None else wait_action_start)
 
-    def eval(self):
-        """评估模式"""
-        self.train = False
+        d_tm = self._get_place("d_TM1") if ("d_TM1" in self.id2p_name and self.device_mode != "cascade") else None
+        head_tok = d_tm.head() if (d_tm is not None and len(d_tm.tokens) > 0) else None
+        locked_sources: Set[str] = set()
+        if self.robot_capacity == 2 and self.device_mode != "cascade" and head_tok is not None:
+            locked_sources = set(getattr(head_tok, "_dst_level_targets", ()))
+
+        enabled: List[int] = []
+        disabled: List[Dict[str, Any]] = []
+
+        # 遍历变迁
+        for t in range(self.T):
+            base_pre = self.pre[:, t]
+            base_pre_idx = np.flatnonzero(base_pre > 0)
+            t_name = self.id2t_name[t]
+
+            if base_pre_idx.size == 0:
+                disabled.append({"action": t, "name": t_name, "reason": "pre_color_mismatch"})
+                continue
+
+            color_pre = base_pre
+            transport_pre_idx = np.flatnonzero(
+                (base_pre > 0) & np.array([name.startswith("d_") for name in self.id2p_name], dtype=bool)
+            )
+            if transport_pre_idx.size > 0:
+                tp_idx = int(transport_pre_idx[0])
+                tp = self.marks[tp_idx]
+                tp_head = tp.head() if len(tp.tokens) > 0 else None
+                head_where = int(getattr(tp_head, "where", 0)) if tp_head is not None else 0
+                color_idx = int(np.clip(head_where, 0, self.pre_color.shape[2] - 1))
+                color_pre = self.pre_color[:, t, color_idx]
+
+            if np.any((base_pre > 0) & (color_pre <= 0)):
+                disabled.append({"action": t, "name": t_name, "reason": "pre_color_mismatch"})
+                continue
+            if np.any(self.m[base_pre_idx] < color_pre[base_pre_idx]):
+                disabled.append({"action": t, "name": t_name, "reason": "insufficient_tokens"})
+                continue
+            if np.any(self.m + self.net[:, t] > self.k):
+                disabled.append({"action": t, "name": t_name, "reason": "capacity_exceeded"})
+                continue
+
+            if t_name.startswith("u_"):
+                src = t_name[2:]
+                if self.robot_capacity == 2 and self.device_mode != "cascade":
+                    if d_tm is not None and len(d_tm.tokens) > 0 and locked_sources and src not in locked_sources:
+                        disabled.append({"action": t, "name": t_name, "reason": "locked_by_arm2_head"})
+                        continue
+                    if self._select_target_for_source(src, ignore_cleaning=True) is None:
+                        disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
+                        continue
+                else:
+                    if self._select_target_for_source(src, ignore_cleaning=True) is None:
+                        disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
+                        continue
+            elif t_name.startswith("t_"):
+                target = t_name[2:]
+                transport_name = self._transport_for_t_target(target)
+                tp = self._get_place(transport_name)
+                tp_head = tp.head() if len(tp.tokens) > 0 else None
+                tp_head_target = getattr(tp_head, "_target_place", None) if tp_head is not None else None
+                if tp_head_target is not None and tp_head_target != target:
+                    disabled.append({"action": t, "name": t_name, "reason": "wrong_destination"})
+                    continue
+
+            # Stage2
+            if t_name.startswith("u_"):
+                src = t_name[2:]
+                if not self._is_process_ready(src):
+                    disabled.append({"action": t, "name": t_name, "reason": "process_not_ready"})
+                    continue
+                if self._select_target_for_source(src) is None:
+                    disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
+                    continue
+            elif t_name.startswith("t_"):
+                target = t_name[2:]
+                target_place = self._get_place(target)
+                if bool(getattr(target_place, "is_cleaning", False)):
+                    disabled.append({"action": t, "name": t_name, "reason": "target_cleaning"})
+                    continue
+                d_place = self._get_place(self._transport_for_t_target(target))
+                dwell_time = max(0, int(getattr(d_place, "processing_time", self.T_transport)))
+                if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
+                    disabled.append({"action": t, "name": t_name, "reason": "dwell_time_not_met"})
+                    continue
+
+            enabled.append(t)
+
+        # wait 动作
+        restrict_long_wait = self._has_ready_chamber_wafers()
+        for offset, duration in enumerate(self.wait_durations):
+            action_idx = start + int(offset)
+            if restrict_long_wait and int(duration) > 5:
+                disabled.append({
+                    "action": action_idx,
+                    "name": f"WAIT_{int(duration)}s",
+                    "reason": "has_ready_wafer_restrict_wait",
+                })
+            else:
+                enabled.append(action_idx)
+
+        return {"enabled": enabled, "disabled": disabled}
 
     def calc_wafer_statistics(self) -> Dict[str, Any]:
         system_times: List[float] = []

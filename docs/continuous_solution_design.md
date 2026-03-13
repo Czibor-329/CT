@@ -122,6 +122,16 @@ flowchart TB
 - 单设备奖励已对齐并发模型运输位规则：`d_TM1`（type=2）中晶圆停留超过 `D_Residual_time` 后按超时时长施加线性惩罚（开关：`reward_config.transport_penalty`，系数：`transport_overtime_coef`）。
 - 单设备新增独立 `_check_qtime_violation` 检测：在时间推进后检查运输位（type=2）是否 `stay_time > D_Residual_time`；仅用于统计 `qtime_violation_count`（同一 wafer 仅首次违规计数 1 次），不新增 reward 惩罚项。
 
+### 训练模式与评估模式
+
+- **训练模式**（`net.train()` / `Env_PN_Single(eval_mode=False)`）：常规 step 流程，无额外开销。
+- **评估模式**（`net.eval()` / `Env_PN_Single(eval_mode=True)`）：
+  - 每步调用 `get_enable_actions_with_reasons()`，返回使能动作列表及不使能动作及原因；
+  - 结果保存在 `env._last_action_enable_info`，供 `export_inference_sequence` 等读取；
+  - 导出时写入 `results/` 目录：`eval_action_enable_<device>_<timestamp>.json`（机器解析）和 `eval_action_enable_<device>_<timestamp>.md`（人工阅读）；
+  - Markdown 报告含摘要、原因说明、每步使能/不使能（按原因分组、中文描述）。
+- **原因码**：`pn_single.REASON_DESC` 维护英文 reason 到中文描述的映射（如 `process_not_ready` -> 腔室加工未完成）。
+
 ### Impact
 - 设备模式统一为 `--device single/cascade`，可视化 `cascade` 不再依赖 `pn.py`，统一走 `pn_single/env_single`。
 - 单设备逻辑集中在 `Continuous_model` 新文件中，便于后续独立迭代。
@@ -305,6 +315,8 @@ python -m solutions.Continuous_model.export_inference_sequence \
 
 - `solutions/Continuous_model/action_series/concurrent_infer_seq_<timestamp>.json`
 - `solutions/Td_petri/planB_sequence.json`
+- `results/eval_action_enable_<device>_<timestamp>.json`：评估模式动作使能日志（机器解析）
+- `results/eval_action_enable_<device>_<timestamp>.md`：评估模式动作使能日志（人工阅读，含摘要、原因说明、每步详情）
 
 其中 `planB_sequence.json` 可直接被 `visualization/main_window.py` 的 Model B 回放逻辑读取。
 单设备模式下，导出 JSON 会附带 `replay_env_overrides`（例如本次 episode 的 `single_process_time_map`），回放前可自动重建环境以保证动作序列与工序时间一致。

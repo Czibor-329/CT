@@ -7,6 +7,20 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 from solutions.Continuous_model.env_single import Env_PN_Single
+from solutions.Continuous_model.pn_single import REASON_DESC
+
+REWARD_DESC_VIZ: Dict[str, str] = {
+    "total": "本步总奖励",
+    "time_cost": "时间惩罚",
+    "proc_reward": "加工奖励",
+    "warn_penalty": "驻留警告惩罚",
+    "penalty": "运输超时惩罚",
+    "wafer_done_bonus": "单片完工奖励",
+    "finish_bonus": "全部完工奖励",
+    "scrap_penalty": "报废惩罚",
+    "release_violation_penalty": "释放违规惩罚",
+    "idle_timeout_penalty": "闲置超时惩罚",
+}
 
 from .algorithm_interface import (
     ActionInfo,
@@ -18,12 +32,14 @@ from .algorithm_interface import (
 )
 
 class PetriSingleAdapter(AlgorithmAdapter):
-    def __init__(self, env: Env_PN_Single) -> None:
+    def __init__(self, env: Env_PN_Single, step_verbose: bool = True) -> None:
         self.env = env
         self.net = env.net
+        self.step_verbose = step_verbose
         self.device_mode = str(getattr(self.net, "single_device_mode", "single")).lower()
         self._last_reward_detail: Dict[str, float] = {}
         self._history: List[Dict[str, Any]] = []
+        self._step_count = 0
         if self.device_mode == "cascade":
             self.disabled_chambers = {"PM5", "PM6"}
         else:
@@ -34,11 +50,32 @@ class PetriSingleAdapter(AlgorithmAdapter):
     def reset(self) -> StateInfo:
         self.env.reset()
         self._history.clear()
+        self._step_count = 0
         return self._collect_state_info()
 
     def step(self, action: int | Tuple[int, int]):
         if isinstance(action, tuple):
             action = int(action[0]) if action[0] != -1 else int(self.action_space_size)
+        self._step_count += 1
+
+        if self.step_verbose:
+            enable_info = self.net.get_enable_actions_with_reasons(
+                wait_action_start=int(self.env.wait_action_start)
+            )
+            enabled_names = [self.env.get_action_name(i) for i in enable_info.get("enabled", [])]
+            by_reason: Dict[str, List[str]] = {}
+            for d in enable_info.get("disabled", []):
+                r = d.get("reason", "unknown")
+                n = d.get("name", str(d.get("action", "")))
+                by_reason.setdefault(r, []).append(n)
+            action_name = self.get_action_name(action)
+            t = getattr(self.net, "time", 0)
+            print(f"\n--- Step {self._step_count} (t={t}) 执行: {action_name} ---")
+            print(f"  使能({len(enabled_names)}): {', '.join(enabled_names) or '-'}")
+            for r, names in sorted(by_reason.items()):
+                desc = REASON_DESC.get(r, r)
+                print(f"  不使能({desc}): {', '.join(names)}")
+
         wait_duration = self.env.parse_wait_action(int(action))
         if wait_duration is not None:
             done, reward_result, scrap = self.net.step(detailed_reward=True, wait_duration=int(wait_duration))
@@ -52,6 +89,16 @@ class PetriSingleAdapter(AlgorithmAdapter):
             if isinstance(reward_result, dict)
             else {"total": reward}
         )
+        if self.step_verbose and self._last_reward_detail:
+            nonzero = {k: v for k, v in self._last_reward_detail.items() if isinstance(v, (int, float)) and v != 0}
+            if nonzero:
+                print("  详细奖励:")
+                for k, v in sorted(nonzero.items()):
+                    lbl = REWARD_DESC_VIZ.get(k, k)
+                    if isinstance(v, float):
+                        print(f"    {lbl}: {v:.4f}")
+                    else:
+                        print(f"    {lbl}: {v}")
         self._history.append(
             {
                 "step": len(self._history) + 1,
