@@ -20,6 +20,18 @@
 - `pop_head() -> BasedToken` 弹出队首 token
 - `append(token) -> None` 追加 token
 - `res_time(current_time, P_Residual_time=15, D_Residual_time=10) -> int` 计算剩余驻留时间
+- `get_obs() -> List[float]` 返回观测特征（基类默认 `[]`，子类覆写）
+
+**Place 子类（单设备观测）**
+
+| 子类 | 库所 | 特征维度 | 构造参数 |
+|-----|------|---------|---------|
+| SR  | LP, LP_done | 1 / 0 | n_wafer |
+| TM  | d_TM1, d_TM2, d_TM3 | 4+4 或 4+2 | D_Residual_time, target_onehot_map, onehot_dim |
+| PM  | PM1, PM3, PM4... | 9 | P_Residual_time, cleaning_* |
+| LL  | LLC, LLD | 4 | - |
+
+构网时由 `construct_single.build_single_device_net(obs_config=...)` 创建。详见 `docs/架构.md`。
 
 ### Petri
 

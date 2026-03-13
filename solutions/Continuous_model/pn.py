@@ -112,6 +112,226 @@ class Place:
     def __len__(self) -> int:
         return len(self.tokens)
 
+    def get_obs(self) -> List[float]:
+        """默认返回空列表；子类 PM/TM/LL/SR 覆写以返回各自特征。"""
+        return []
+
+    def get_obs_dim(self) -> int:
+        """返回观测向量维度；子类继承即可，基于 get_obs 长度。"""
+        return len(self.get_obs())
+
+
+# ---------- Place 子类（单设备观测用）----------
+# SR=Source, TM=Transport, PM=Process Module, LL=Load Lock
+
+
+class SR(Place):
+    """源/汇聚库所（LP、LP_done），LP 返回 1 维 remaining_norm，LP_done 不进观测。"""
+    def __init__(self, name: str, capacity: int, processing_time: int, type: int = 3, n_wafer: int = 1, **kwargs):
+        super().__init__(name=name, capacity=capacity, processing_time=processing_time, type=type, **kwargs)
+        self._n_wafer = max(1, n_wafer)
+
+    def get_obs(self) -> List[float]:
+        if self.name == "LP_done":
+            return []
+        denom = max(1.0, float(self._n_wafer))
+        remaining_norm = float(np.clip(len(self.tokens) / denom, 0.0, 1.0))
+        return [remaining_norm]
+
+    def clone(self) -> "SR":
+        cloned = SR(
+            name=self.name,
+            capacity=self.capacity,
+            processing_time=self.processing_time,
+            type=self.type,
+            n_wafer=self._n_wafer,
+            last_machine=getattr(self, "last_machine", -1),
+            processed_wafer_count=getattr(self, "processed_wafer_count", 0),
+            idle_time=getattr(self, "idle_time", 0),
+            last_proc_type=getattr(self, "last_proc_type", ""),
+            is_cleaning=getattr(self, "is_cleaning", False),
+            cleaning_remaining=getattr(self, "cleaning_remaining", 0),
+            cleaning_reason=getattr(self, "cleaning_reason", ""),
+        )
+        cloned.tokens = deque(tok.clone() for tok in self.tokens)
+        return cloned
+
+
+class TM(Place):
+    """运输位（d_TM1/d_TM2/d_TM3），返回 4 维时间 + onehot_dim 维去向 one-hot。"""
+    def __init__(
+        self,
+        name: str,
+        capacity: int,
+        processing_time: int,
+        type: int = 2,
+        D_Residual_time: int = 10,
+        target_onehot_map: Optional[Dict[str, int]] = None,
+        onehot_dim: int = 4,
+        **kwargs,
+    ):
+        super().__init__(name=name, capacity=capacity, processing_time=processing_time, type=type, **kwargs)
+        self._D_Residual_time = max(1, D_Residual_time)
+        self._target_onehot_map = target_onehot_map or {}
+        self._onehot_dim = max(1, onehot_dim)
+
+    def get_obs(self) -> List[float]:
+        penalty_time = max(1.0, float(self._D_Residual_time))
+        dwell_time = max(1.0, float(getattr(self, "processing_time", 5)))
+        if len(self.tokens) == 0:
+            time_feat = [0.0, 0.0, 0.0, 1.0]
+            onehot = [0.0] * self._onehot_dim
+            return time_feat + onehot
+        stay_time = float(getattr(self.head(), "stay_time", 0))
+        any_complete = 1.0 if stay_time >= dwell_time else 0.0
+        any_over_long = 1.0 if stay_time > penalty_time else 0.0
+        tm_norm_denom = max(dwell_time, penalty_time) * 2.0
+        max_stay_norm = float(np.clip(stay_time / tm_norm_denom, 0.0, 1.0))
+        distance_to_penalty = max(0.0, penalty_time - stay_time)
+        min_distance_norm = float(np.clip(distance_to_penalty / penalty_time, 0.0, 1.0))
+        time_feat = [any_complete, any_over_long, max_stay_norm, min_distance_norm]
+        onehot = [0.0] * self._onehot_dim
+        target = getattr(self.head(), "_target_place", None)
+        if target is not None and target in self._target_onehot_map:
+            idx = self._target_onehot_map[target]
+            if 0 <= idx < self._onehot_dim:
+                onehot[idx] = 1.0
+        return time_feat + onehot
+
+    def clone(self) -> "TM":
+        cloned = TM(
+            name=self.name,
+            capacity=self.capacity,
+            processing_time=self.processing_time,
+            type=self.type,
+            D_Residual_time=self._D_Residual_time,
+            target_onehot_map=dict(self._target_onehot_map),
+            onehot_dim=self._onehot_dim,
+            last_machine=getattr(self, "last_machine", -1),
+        )
+        cloned.tokens = deque(tok.clone() for tok in self.tokens)
+        return cloned
+
+
+class PM(Place):
+    """加工腔室（PM1/PM3/PM4/PM6 等），返回 9 维特征。"""
+    def __init__(
+        self,
+        name: str,
+        capacity: int,
+        processing_time: int,
+        type: int = 1,
+        P_Residual_time: int = 15,
+        cleaning_duration: int = 150,
+        cleaning_trigger_wafers: int = 5,
+        scrap_clip_threshold: float = 20.0,
+        **kwargs,
+    ):
+        super().__init__(name=name, capacity=capacity, processing_time=processing_time, type=type, **kwargs)
+        self._P_Residual_time = max(1, P_Residual_time)
+        self._cleaning_duration = max(1, cleaning_duration)
+        self._cleaning_trigger_wafers = max(1, cleaning_trigger_wafers)
+        self._scrap_clip_threshold = max(1.0, scrap_clip_threshold)
+
+    def get_obs(self) -> List[float]:
+        has_wafer = len(self.tokens) > 0
+        proc_time = max(1.0, float(getattr(self, "processing_time", 0)))
+        p_residual = max(1.0, float(self._P_Residual_time))
+        occupied = 1.0 if has_wafer else 0.0
+        processing = 0.0
+        done_waiting_pick = 0.0
+        remaining_process_time_norm = 0.0
+        wafer_stay_time_norm = 0.0
+        wafer_time_to_scrap_norm = 0.0
+        if has_wafer:
+            stay_time = float(getattr(self.head(), "stay_time", 0))
+            processing = 1.0 if stay_time < proc_time else 0.0
+            done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
+            remaining_proc = max(0.0, proc_time - stay_time)
+            remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
+            wafer_stay_time_norm = float(np.clip(stay_time / proc_time, 0.0, 1.0))
+            time_to_scrap = max(0.0, proc_time + p_residual - stay_time)
+            wafer_time_to_scrap_norm = float(
+                np.clip(time_to_scrap, 0.0, self._scrap_clip_threshold) / self._scrap_clip_threshold
+            )
+        is_cleaning = 1.0 if bool(getattr(self, "is_cleaning", False)) else 0.0
+        clean_remaining = max(0.0, float(getattr(self, "cleaning_remaining", 0)))
+        clean_remaining_time_norm = float(np.clip(clean_remaining / self._cleaning_duration, 0.0, 1.0))
+        processed_count = max(0.0, float(getattr(self, "processed_wafer_count", 0)))
+        remaining_runs = max(0.0, self._cleaning_trigger_wafers - processed_count)
+        remaining_runs_before_clean_norm = float(np.clip(remaining_runs / self._cleaning_trigger_wafers, 0.0, 1.0))
+        return [
+            occupied,
+            processing,
+            done_waiting_pick,
+            remaining_process_time_norm,
+            wafer_stay_time_norm,
+            wafer_time_to_scrap_norm,
+            is_cleaning,
+            clean_remaining_time_norm,
+            remaining_runs_before_clean_norm,
+        ]
+
+    def clone(self) -> "PM":
+        cloned = PM(
+            name=self.name,
+            capacity=self.capacity,
+            processing_time=self.processing_time,
+            type=self.type,
+            P_Residual_time=self._P_Residual_time,
+            cleaning_duration=self._cleaning_duration,
+            cleaning_trigger_wafers=self._cleaning_trigger_wafers,
+            scrap_clip_threshold=self._scrap_clip_threshold,
+            last_machine=getattr(self, "last_machine", -1),
+            processed_wafer_count=getattr(self, "processed_wafer_count", 0),
+            idle_time=getattr(self, "idle_time", 0),
+            last_proc_type=getattr(self, "last_proc_type", ""),
+            is_cleaning=getattr(self, "is_cleaning", False),
+            cleaning_remaining=getattr(self, "cleaning_remaining", 0),
+            cleaning_reason=getattr(self, "cleaning_reason", ""),
+        )
+        cloned.tokens = deque(tok.clone() for tok in self.tokens)
+        return cloned
+
+
+class LL(Place):
+    """Load Lock 缓冲（LLC/LLD），返回 4 维特征。"""
+    def get_obs(self) -> List[float]:
+        has_wafer = len(self.tokens) > 0
+        raw_proc_time = float(getattr(self, "processing_time", 0))
+        proc_time = max(1.0, raw_proc_time)
+        occupied = 1.0 if has_wafer else 0.0
+        processing = 0.0
+        done_waiting_pick = 0.0
+        remaining_process_time_norm = 0.0
+        if has_wafer:
+            stay_time = float(getattr(self.head(), "stay_time", 0))
+            if raw_proc_time <= 0.0:
+                done_waiting_pick = 1.0
+            else:
+                processing = 1.0 if stay_time < proc_time else 0.0
+                done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
+                remaining_proc = max(0.0, proc_time - stay_time)
+                remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
+        return [occupied, processing, done_waiting_pick, remaining_process_time_norm]
+
+    def clone(self) -> "LL":
+        cloned = LL(
+            name=self.name,
+            capacity=self.capacity,
+            processing_time=self.processing_time,
+            type=self.type,
+            last_machine=getattr(self, "last_machine", -1),
+            processed_wafer_count=getattr(self, "processed_wafer_count", 0),
+            idle_time=getattr(self, "idle_time", 0),
+            last_proc_type=getattr(self, "last_proc_type", ""),
+            is_cleaning=getattr(self, "is_cleaning", False),
+            cleaning_remaining=getattr(self, "cleaning_remaining", 0),
+            cleaning_reason=getattr(self, "cleaning_reason", ""),
+        )
+        cloned.tokens = deque(tok.clone() for tok in self.tokens)
+        return cloned
+
 
 class Petri:
     def __init__(self, config: Optional[PetriEnvConfig] = None,

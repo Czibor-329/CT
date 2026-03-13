@@ -8,12 +8,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
 from solutions.Continuous_model.construct import BasedToken
-from solutions.Continuous_model.pn import Place
+from solutions.Continuous_model.pn import LL, PM, Place, SR, TM
 
 
 # 路线定义：stages 为阶段序列，每个阶段为单点或并行多点
@@ -164,6 +164,7 @@ def build_single_device_net(
     process_time_map: Optional[Dict[str, int]] = None,
     route_code: int = 0,
     device_mode: str = "single",
+    obs_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
     """
     构建 Petri 网结构：
@@ -356,6 +357,26 @@ def build_single_device_net(
     capacity = np.array([modules[name].capacity for name in id2p_name], dtype=int)
     ttime_arr = np.array([ttime for _ in range(T)], dtype=int)
 
+    # 构建 TM one-hot 映射（按路线与设备模式）
+    def _tm1_onehot_map() -> Dict[str, int]:
+        m: Dict[str, int] = {"PM1": 0, "PM3": 1, "PM4": 1, "PM6": 2, "LP_done": 3}
+        if route_code != 1:
+            m.pop("PM6", None)
+        return m
+
+    def _tm2_onehot_map() -> Dict[str, int]:
+        return {"PM7": 0, "PM8": 0, "LLC": 1, "PM9": 2, "PM10": 2, "LP_done": 3}
+
+    def _tm3_onehot_map() -> Dict[str, int]:
+        return {"PM1": 0, "PM2": 0, "PM3": 0, "PM4": 0, "LLD": 1}
+
+    ctx = obs_config or {}
+    p_res = int(ctx.get("P_Residual_time", 15))
+    d_res = int(ctx.get("D_Residual_time", 10))
+    clean_dur = int(ctx.get("cleaning_duration", 150))
+    clean_trig = int(ctx.get("cleaning_trigger_wafers", 5))
+    scrap_clip = float(ctx.get("scrap_clip_threshold", 20.0))
+
     marks: List[Place] = []
     for name in id2p_name:
         spec = modules[name]
@@ -367,7 +388,60 @@ def build_single_device_net(
             ptype = 5
         else:
             ptype = 1
-        place = Place(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
+
+        if obs_config is not None:
+            if name == "LP":
+                place = SR(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype, n_wafer=n_wafer)
+            elif name == "LP_done":
+                place = SR(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
+            elif name == "d_TM1":
+                place = TM(
+                    name=name,
+                    capacity=spec.capacity,
+                    processing_time=spec.ptime,
+                    type=ptype,
+                    D_Residual_time=d_res,
+                    target_onehot_map=_tm1_onehot_map(),
+                    onehot_dim=4,
+                )
+            elif name == "d_TM2":
+                place = TM(
+                    name=name,
+                    capacity=spec.capacity,
+                    processing_time=spec.ptime,
+                    type=ptype,
+                    D_Residual_time=d_res,
+                    target_onehot_map=_tm2_onehot_map(),
+                    onehot_dim=4,
+                )
+            elif name == "d_TM3":
+                place = TM(
+                    name=name,
+                    capacity=spec.capacity,
+                    processing_time=spec.ptime,
+                    type=ptype,
+                    D_Residual_time=d_res,
+                    target_onehot_map=_tm3_onehot_map(),
+                    onehot_dim=2,
+                )
+            elif name in {"LLC", "LLD"}:
+                place = LL(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
+            elif ptype == 1:
+                place = PM(
+                    name=name,
+                    capacity=spec.capacity,
+                    processing_time=spec.ptime,
+                    type=ptype,
+                    P_Residual_time=p_res,
+                    cleaning_duration=clean_dur,
+                    cleaning_trigger_wafers=clean_trig,
+                    scrap_clip_threshold=scrap_clip,
+                )
+            else:
+                place = Place(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
+        else:
+            place = Place(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
+
         if name == "LP":
             for tok_id in range(n_wafer):
                 place.append(BasedToken(enter_time=0, token_id=tok_id, route_type=1, step=0, where=0))

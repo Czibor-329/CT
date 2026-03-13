@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from tensordict import TensorDict
 from torchrl.data import Binary, Categorical, Composite, Unbounded
@@ -19,7 +18,6 @@ from pathlib import Path
 class Env_PN_Single(EnvBase):
     metadata = {"render.modes": ["human", "rgb_array"], "reder_fps": 30}
     batch_locked = False
-    SCRAP_CLIP_THRESHOLD = 20.0
 
     def __init__(
         self,
@@ -115,13 +113,7 @@ class Env_PN_Single(EnvBase):
         return self.net.id2t_name[int(value)]
 
     def _make_spec(self):
-        chamber_names = self._get_place_obs_pm_names()
-        chamber_feature_dim = sum(self._get_place_obs_feature_dim(name) for name in chamber_names)
-        # LP(1) + TM + 每个腔室特征（route 感知）
-        # single: TM=8 维（4 维时间 + 4 维去向 one-hot）；cascade: TM=14 维（TM2 8 维 + TM3 6 维）
-        is_cascade = getattr(self.net, "single_device_mode", "single") == "cascade"
-        tm_dim = 14 if is_cascade else 8
-        obs_dim = 1 + tm_dim + chamber_feature_dim
+        obs_dim = self.net.get_obs_dim()
         self.observation_spec = Composite(
             observation=Unbounded(shape=(obs_dim,), dtype=torch.float32, device=self.device),
             action_mask=Binary(n=self.n_actions, dtype=torch.bool),
@@ -147,258 +139,6 @@ class Env_PN_Single(EnvBase):
             }
         )
 
-    def _get_place_obs_pm_names(self) -> List[str]:
-        # 观测腔室列表与 pn_single 路线配置保持同源，避免 route 变更后维度漂移。
-        candidates = list(self.net.chambers)
-        is_cascade = getattr(self.net, "single_device_mode", "single") == "cascade"
-        if is_cascade and "LLC" not in candidates:
-            candidates.append("LLC")
-        observed: List[str] = []
-        seen = set()
-        for name in candidates:
-            if not (name.startswith("PM") or name in {"LLC", "LLD"}):
-                continue
-            if name in seen:
-                continue
-            observed.append(name)
-            seen.add(name)
-        if not observed:
-            observed = ["PM1", "PM3", "PM4"]
-        return observed
-
-    def _get_place_obs_feature_dim(self, place_name: str) -> int:
-        if place_name in {"LLC", "LLD"}:
-            return 4
-        return 9
-
-    def _extract_place_features(self, place_name: str) -> List[float]:
-        if place_name == "TM":
-            if getattr(self.net, "single_device_mode", "single") == "cascade":
-                return self._extract_tm_cascade_features()
-            return self._extract_tm_single_features()
-        place = self.net._get_place(place_name)
-        if place_name == "LP":
-            remaining = float(len(place.tokens))
-            denom = max(1.0, float(self.n_wafer))
-            remaining_norm = float(np.clip(remaining / denom, 0.0, 1.0))
-            return [remaining_norm]
-        if place_name in {"LLC", "LLD"}:
-            return self._extract_ll_features(place)
-        if place_name.startswith("PM"):
-            return self._extract_pm_features(place)
-        return []
-
-    def _extract_tm_features(self) -> List[float]:
-        transport_names = [name for name in self.net.id2p_name if name.startswith("d_")]
-        penalty_time = max(1.0, float(getattr(self.net, "D_Residual_time", 10)))
-        if not transport_names:
-            return [0.0, 0.0, 0.0, 1.0]
-
-        has_wafer = False
-        any_complete = 0.0
-        any_over_long = 0.0
-        max_stay_norm = 0.0
-        min_distance_norm = 1.0
-
-        for name in transport_names:
-            place = self.net._get_place(name)
-            if len(place.tokens) == 0:
-                continue
-            has_wafer = True
-            dwell_time = max(1.0, float(getattr(place, "processing_time", self.net.T_transport)))
-            stay_time = float(getattr(place.head(), "stay_time", 0))
-            any_complete = max(any_complete, 1.0 if stay_time >= dwell_time else 0.0)
-            any_over_long = max(any_over_long, 1.0 if stay_time > penalty_time else 0.0)
-            tm_norm_denom = max(dwell_time, penalty_time) * 2.0
-            max_stay_norm = max(max_stay_norm, float(np.clip(stay_time / tm_norm_denom, 0.0, 1.0)))
-            distance_to_penalty = max(0.0, penalty_time - stay_time)
-            min_distance_norm = min(
-                min_distance_norm,
-                float(np.clip(distance_to_penalty / penalty_time, 0.0, 1.0)),
-            )
-
-        if not has_wafer:
-            return [0.0, 0.0, 0.0, 1.0]
-
-        return [any_complete, any_over_long, max_stay_norm, min_distance_norm]
-
-    def _extract_wafer_dest_onehot_tm2(self) -> List[float]:
-        """d_TM2 队首晶圆去向 one-hot（4 类）：PM7/PM8 -> 0, LLC -> 1, PM9/PM10 -> 2, LP_done -> 3"""
-        onehot = [0.0, 0.0, 0.0, 0.0]
-        if "d_TM2" not in self.net.id2p_name:
-            return onehot
-        place = self.net._get_place("d_TM2")
-        if len(place.tokens) == 0:
-            return onehot
-        target = getattr(place.head(), "_target_place", None)
-        if target is None:
-            return onehot
-        if target in {"PM7", "PM8"}:
-            onehot[0] = 1.0
-        elif target == "LLC":
-            onehot[1] = 1.0
-        elif target in {"PM9", "PM10"}:
-            onehot[2] = 1.0
-        elif target == "LP_done":
-            onehot[3] = 1.0
-        return onehot
-
-    def _extract_wafer_dest_onehot_tm3(self) -> List[float]:
-        """d_TM3 队首晶圆去向 one-hot（2 类）：PM1/2/3/4 -> 0, LLD -> 1"""
-        onehot = [0.0, 0.0]
-        if "d_TM3" not in self.net.id2p_name:
-            return onehot
-        place = self.net._get_place("d_TM3")
-        if len(place.tokens) == 0:
-            return onehot
-        target = getattr(place.head(), "_target_place", None)
-        if target is None:
-            return onehot
-        if target in {"PM1", "PM2", "PM3", "PM4"}:
-            onehot[0] = 1.0
-        elif target == "LLD":
-            onehot[1] = 1.0
-        return onehot
-
-    def _extract_wafer_dest_onehot_tm1(self) -> List[float]:
-        """d_TM1 队首晶圆去向 one-hot（4 类）：PM1 -> 0, PM3/PM4 -> 1, PM6 -> 2, LP_done -> 3"""
-        onehot = [0.0, 0.0, 0.0, 0.0]
-        if "d_TM1" not in self.net.id2p_name:
-            return onehot
-        place = self.net._get_place("d_TM1")
-        if len(place.tokens) == 0:
-            return onehot
-        target = getattr(place.head(), "_target_place", None)
-        if target is None:
-            return onehot
-        if target == "PM1":
-            onehot[0] = 1.0
-        elif target in {"PM3", "PM4"}:
-            onehot[1] = 1.0
-        elif target == "PM6":
-            onehot[2] = 1.0
-        elif target == "LP_done":
-            onehot[3] = 1.0
-        return onehot
-
-    def _extract_tm_features_single_place(self, place_name: str) -> List[float]:
-        """单个运输位（d_TM2 或 d_TM3）的 4 维时间特征"""
-        penalty_time = max(1.0, float(getattr(self.net, "D_Residual_time", 10)))
-        if place_name not in self.net.id2p_name:
-            return [0.0, 0.0, 0.0, 1.0]
-        place = self.net._get_place(place_name)
-        if len(place.tokens) == 0:
-            return [0.0, 0.0, 0.0, 1.0]
-        dwell_time = max(1.0, float(getattr(place, "processing_time", self.net.T_transport)))
-        stay_time = float(getattr(place.head(), "stay_time", 0))
-        any_complete = 1.0 if stay_time >= dwell_time else 0.0
-        any_over_long = 1.0 if stay_time > penalty_time else 0.0
-        tm_norm_denom = max(dwell_time, penalty_time) * 2.0
-        max_stay_norm = float(np.clip(stay_time / tm_norm_denom, 0.0, 1.0))
-        distance_to_penalty = max(0.0, penalty_time - stay_time)
-        min_distance_norm = float(np.clip(distance_to_penalty / penalty_time, 0.0, 1.0))
-        return [any_complete, any_over_long, max_stay_norm, min_distance_norm]
-
-    def _extract_tm_cascade_features(self) -> List[float]:
-        """cascade 模式：TM2 块（4+4）+ TM3 块（4+2）共 14 维"""
-        # TM2: 4 维时间 + 4 维去向 one-hot
-        tm2_time = self._extract_tm_features_single_place("d_TM2")
-        tm2_onehot = self._extract_wafer_dest_onehot_tm2()
-        # TM3: 4 维时间 + 2 维去向 one-hot
-        tm3_time = self._extract_tm_features_single_place("d_TM3")
-        tm3_onehot = self._extract_wafer_dest_onehot_tm3()
-        return tm2_time + tm2_onehot + tm3_time + tm3_onehot
-
-    def _extract_tm_single_features(self) -> List[float]:
-        """single 模式：d_TM1 的 4 维时间 + 4 维去向 one-hot 共 8 维"""
-        tm1_time = self._extract_tm_features_single_place("d_TM1")
-        tm1_onehot = self._extract_wafer_dest_onehot_tm1()
-        return tm1_time + tm1_onehot
-
-    def _extract_pm_features(self, place) -> List[float]:
-        has_wafer = len(place.tokens) > 0
-        proc_time = max(1.0, float(getattr(place, "processing_time", 0)))
-        p_residual = max(1.0, float(getattr(self.net, "P_Residual_time", 15)))
-        clean_duration = self.net.cleaning_duration
-        clean_trigger_runs = self.net.cleaning_trigger_wafers
-
-        occupied = 1.0 if has_wafer else 0.0
-        processing = 0.0
-        done_waiting_pick = 0.0
-        remaining_process_time_norm = 0.0
-        wafer_stay_time_norm = 0.0
-        wafer_time_to_scrap_norm = 0.0
-
-        if has_wafer:
-            stay_time = float(getattr(place.head(), "stay_time", 0))
-            processing = 1.0 if stay_time < proc_time else 0.0
-            done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
-            remaining_proc = max(0.0, proc_time - stay_time)
-            remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
-            wafer_stay_time_norm = float(np.clip(stay_time / proc_time, 0.0, 1.0))
-            time_to_scrap = max(0.0, proc_time + p_residual - stay_time)
-            wafer_time_to_scrap_norm = float(
-                np.clip(time_to_scrap, 0.0, self.SCRAP_CLIP_THRESHOLD) / self.SCRAP_CLIP_THRESHOLD
-            )
-
-        is_cleaning = 1.0 if bool(getattr(place, "is_cleaning", False)) else 0.0
-        clean_remaining = max(0.0, float(getattr(place, "cleaning_remaining", 0)))
-        clean_remaining_time_norm = float(np.clip(clean_remaining / clean_duration, 0.0, 1.0))
-
-        processed_count = max(0.0, float(getattr(place, "processed_wafer_count", 0)))
-        remaining_runs = max(0.0, clean_trigger_runs - processed_count)
-        remaining_runs_before_clean_norm = float(np.clip(remaining_runs / clean_trigger_runs, 0.0, 1.0))
-
-        return [
-            occupied,
-            processing,
-            done_waiting_pick,
-            remaining_process_time_norm,
-            wafer_stay_time_norm,
-            wafer_time_to_scrap_norm,
-            is_cleaning,
-            clean_remaining_time_norm,
-            remaining_runs_before_clean_norm,
-        ]
-
-    def _extract_ll_features(self, place) -> List[float]:
-        has_wafer = len(place.tokens) > 0
-        raw_proc_time = float(getattr(place, "processing_time", 0))
-        proc_time = max(1.0, raw_proc_time)
-
-        occupied = 1.0 if has_wafer else 0.0
-        processing = 0.0
-        done_waiting_pick = 0.0
-        remaining_process_time_norm = 0.0
-
-        if has_wafer:
-            stay_time = float(getattr(place.head(), "stay_time", 0))
-            if raw_proc_time <= 0.0:
-                # LLC 是 0 秒驻留位，落片后可视为已完成待取。
-                processing = 0.0
-                done_waiting_pick = 1.0
-                remaining_process_time_norm = 0.0
-            else:
-                processing = 1.0 if stay_time < proc_time else 0.0
-                done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
-                remaining_proc = max(0.0, proc_time - stay_time)
-                remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
-
-        return [
-            occupied,
-            processing,
-            done_waiting_pick,
-            remaining_process_time_norm,
-        ]
-
-    def _build_obs(self):
-        obs: List[float] = []
-        obs.extend(self._extract_place_features("LP"))
-        obs.extend(self._extract_place_features("TM"))
-        for pm_name in self._get_place_obs_pm_names():
-            obs.extend(self._extract_place_features(pm_name))
-        return np.array(obs, dtype=np.float32)
-
     def _mask(self):
         return self.net.get_action_mask(
             wait_action_start=self.wait_action_start,
@@ -413,7 +153,7 @@ class Env_PN_Single(EnvBase):
             self.net.eval()
         else:
             self.net.train()
-        return self._build_state_td(self._build_obs(), self._mask(), self.net.time)
+        return self._build_state_td(self.net.get_obs(), self._mask(), self.net.time)
 
     def _step(self, tensordict=None):
         action = int(tensordict["action"].item())
@@ -424,12 +164,12 @@ class Env_PN_Single(EnvBase):
         wait_duration = self.parse_wait_action(action)
         use_detailed_reward = self.eval_mode
         if wait_duration is not None:
-            done, reward_result, scrap, action_mask = self.net.step(
+            done, reward_result, scrap, action_mask, obs = self.net.step(
                 wait_duration=int(wait_duration), detailed_reward=use_detailed_reward
             )
         else:
             _, transition_idx = self._decode_action(action)
-            done, reward_result, scrap, action_mask = self.net.step(
+            done, reward_result, scrap, action_mask, obs = self.net.step(
                 a1=int(transition_idx), detailed_reward=use_detailed_reward
             )
         deadlock = bool(getattr(self.net, "_last_deadlock", False))
@@ -445,7 +185,7 @@ class Env_PN_Single(EnvBase):
 
         out = TensorDict(
             {
-                "observation": torch.as_tensor(self._build_obs(), dtype=torch.float32),
+                "observation": torch.as_tensor(obs, dtype=torch.float32),
                 "action_mask": torch.as_tensor(action_mask, dtype=torch.bool),
                 "time": torch.tensor([self.net.time], dtype=torch.int64),
                 "finish": torch.tensor(bool(done and not scrap and not deadlock), dtype=torch.bool),

@@ -92,5 +92,10 @@
 - 归一化分母均设置下限 `>=1`，避免除零。
 - 若开启工序时间随机扰动，同一 episode 内工序时长固定；不同 episode 才会重新采样。
 
+## Place 子类与 obs 构造
+
+特征由 Place 子类（SR、TM、PM、LL）的 `get_obs()` 提供。`Place.get_obs_dim()` 返回单库所观测维度（SR 1/0、TM 4+onehot_dim、PM 9、LL 4）；基类默认 `len(self.get_obs())`，子类可覆写。构网时 `build_single_device_net(obs_config=...)` 根据 `obs_config` 创建对应子类。`ClusterTool.get_obs()` 仅负责：1）`_get_obs_place_order()` 确定观测顺序（LP + 运输位 + 腔室）；2）依次调用 `place.get_obs()` 并聚合；`ClusterTool.get_obs_dim()` 对顺序内库所求和 `place.get_obs_dim()`。`step()` 返回 `(done, reward_result, scrap, action_mask, obs)`。Env 使用 `net.get_obs()` 与 `step` 返回值，不再自行构造 obs。详见 `docs/架构.md` 3.2 节。
+
 ## Related Docs
 - `docs/README.md`
+- `docs/架构.md` Place 类继承结构

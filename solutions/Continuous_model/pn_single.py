@@ -106,6 +106,13 @@ class ClusterTool:
         self._base_proc_time_map = self._preprocess_process_time_map(raw)
         self._episode_proc_time_map: Dict[str, int] = {}
 
+        obs_config = {
+            "P_Residual_time": self.P_Residual_time,
+            "D_Residual_time": self.D_Residual_time,
+            "cleaning_duration": self.cleaning_duration,
+            "cleaning_trigger_wafers": self.cleaning_trigger_wafers,
+            "scrap_clip_threshold": 20.0,
+        }
         info = build_single_device_net(
             n_wafer=self.n_wafer,
             ttime=max(1, self.T_transport),
@@ -113,6 +120,7 @@ class ClusterTool:
             process_time_map=self._base_proc_time_map,
             route_code=self.route_code,
             device_mode=self.device_mode,
+            obs_config=obs_config,
         )
         self.pre: np.ndarray = info["pre"]
         self.pre_color: np.ndarray = info.get("pre_color", self.pre[:, :, None])
@@ -189,7 +197,7 @@ class ClusterTool:
         单设备一步推进入口。
         - 非 wait：按既有 ttime 发射变迁
         - wait：支持多档等待，并用关键事件截断，避免一次跨越多个决策点
-        返回：(done, reward_result, scrap, action_mask)
+        返回：(done, reward_result, scrap, action_mask, obs)
         """
         DONE = False
         SCRAPE = False
@@ -204,7 +212,8 @@ class ClusterTool:
                 wait_action_start=int(self.T),
                 n_actions=int(self.T + len(self.wait_durations)),
             )
-            return DONE, timeout_reward, SCRAPE, action_mask
+            obs = self.get_obs()
+            return DONE, timeout_reward, SCRAPE, action_mask, obs
 
         action = a1
         do_wait = (wait_duration is not None) or action is None
@@ -296,7 +305,8 @@ class ClusterTool:
                     wait_action_start=int(self.T),
                     n_actions=int(self.T + len(self.wait_durations)),
                 )
-                return DONE, reward_result, SCRAPE, action_mask
+                obs = self.get_obs()
+                return DONE, reward_result, SCRAPE, action_mask, obs
 
         # ===== 任务完成奖励 ======
         if finish:
@@ -310,7 +320,8 @@ class ClusterTool:
             wait_action_start=int(self.T),
             n_actions=int(self.T + len(self.wait_durations)),
         )
-        return bool(finish), reward_result, SCRAPE, action_mask
+        obs = self.get_obs()
+        return bool(finish), reward_result, SCRAPE, action_mask, obs
 
     def reset(self):
         self.marks = self._clone_marks(self.ori_marks)
@@ -343,6 +354,41 @@ class ClusterTool:
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
         return None, self.get_enable_t()
+
+    def _get_obs_place_order(self) -> List[str]:
+        """返回观测顺序：LP + 运输位 + 腔室。"""
+        tm_names = ["d_TM2", "d_TM3"] if self.device_mode == "cascade" else ["d_TM1"]
+        tm_names = [n for n in tm_names if n in self.id2p_name]
+        candidates = list(self.chambers)
+        if self.device_mode == "cascade" and "LLC" not in candidates:
+            candidates.append("LLC")
+        chambers: List[str] = []
+        seen: Set[str] = set()
+        for name in candidates:
+            if not (name.startswith("PM") or name in {"LLC", "LLD"}):
+                continue
+            if name in seen:
+                continue
+            chambers.append(name)
+            seen.add(name)
+        if not chambers:
+            chambers = ["PM1", "PM3", "PM4"]
+        return ["LP"] + tm_names + chambers
+
+    def get_obs(self) -> np.ndarray:
+        obs: List[float] = []
+        for name in self._get_obs_place_order():
+            if name not in self.id2p_name:
+                continue
+            obs.extend(self._get_place(name).get_obs())
+        return np.array(obs, dtype=np.float32)
+
+    def get_obs_dim(self) -> int:
+        return sum(
+            self._get_place(name).get_obs_dim()
+            for name in self._get_obs_place_order()
+            if name in self.id2p_name
+        )
 
     def calc_reward(self, t1: int, t2: int, detailed: bool = False):
         dt = max(0, t2 - t1)
@@ -760,20 +806,7 @@ class ClusterTool:
     def _clone_marks(marks: List[Place]) -> List[Place]:
         cloned: List[Place] = []
         for p in marks:
-            cp = Place(
-                name=p.name,
-                capacity=p.capacity,
-                processing_time=p.processing_time,
-                type=p.type,
-                last_machine=getattr(p, "last_machine", -1),
-                processed_wafer_count=int(getattr(p, "processed_wafer_count", 0)),
-                idle_time=int(getattr(p, "idle_time", 0)),
-                last_proc_type=str(getattr(p, "last_proc_type", "")),
-                is_cleaning=bool(getattr(p, "is_cleaning", False)),
-                cleaning_remaining=int(getattr(p, "cleaning_remaining", 0)),
-                cleaning_reason=str(getattr(p, "cleaning_reason", "")),
-            )
-            cp.tokens = deque(tok.clone() for tok in p.tokens)
+            cp = p.clone()
             cloned.append(cp)
         return cloned
 
