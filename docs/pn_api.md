@@ -101,11 +101,11 @@ class BasedToken:
 - 通过 `PetriEnvConfig.single_robot_capacity` 控制 `d_TM1` 容量：
   - `1`：Single Arm（单臂）
   - `2`：Dual Arm（双臂）
-- 单设备清洗配置（当前训练简化版）：
-  - `single_cleaning_enabled=true`
-  - `single_cleaning_targets=["PM3","PM4"]`
-  - `single_cleaning_trigger_wafers=2`
-  - `single_cleaning_duration=150`
+- 单设备清洗配置（当前训练简化版）：ClusterTool 属性名为 `cleaning_*`，配置文件 single.json 中对应 `cleaning_*`
+  - `cleaning_enabled=true`
+  - `cleaning_targets=["PM1","PM3","PM4","PM6"]`（可配置）
+  - `cleaning_trigger_wafers=5`（可配置，默认 5）
+  - `cleaning_duration=150`
 
 **工艺路线**
 - `single_device_mode="cascade"`：

@@ -292,8 +292,8 @@ class Env_PN_Single(EnvBase):
         has_wafer = len(place.tokens) > 0
         proc_time = max(1.0, float(getattr(place, "processing_time", 0)))
         p_residual = max(1.0, float(getattr(self.net, "P_Residual_time", 15)))
-        clean_duration = max(1.0, float(getattr(self.net, "single_cleaning_duration", 150)))
-        clean_trigger_runs = max(1.0, float(getattr(self.net, "single_cleaning_trigger_wafers", 2)))
+        clean_duration = max(1.0, float(getattr(self.net, "cleaning_duration", 150)))
+        clean_trigger_runs = max(1.0, float(getattr(self.net, "cleaning_trigger_wafers", 2)))
 
         occupied = 1.0 if has_wafer else 0.0
         processing = 0.0

@@ -159,8 +159,8 @@ class PetriSingleAdapter(AlgorithmAdapter):
         chambers: List[ChamberState] = []
         transports: List[ChamberState] = []
         release_schedule: Dict[str, list] = {}
-        trigger = int(getattr(self.net, "single_cleaning_trigger_wafers", 2))
-        targets = set(getattr(self.net, "single_cleaning_targets", {"PM3", "PM4"}))
+        trigger = int(getattr(self.net, "cleaning_trigger_wafers", 2))
+        targets = set(getattr(self.net, "cleaning_targets", {"PM3", "PM4"}))
         for idx, place in enumerate(self.net.marks):
             wafers = [
                 WaferState(

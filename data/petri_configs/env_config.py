@@ -41,7 +41,7 @@ def _default_single_proc_time_rand_scale_map() -> Dict[str, Dict[str, float]]:
     }
 
 
-def _default_single_wait_durations() -> List[int]:
+def _default_wait_durations() -> List[int]:
     return [5, 10, 20, 50, 100]
 
 
@@ -112,7 +112,7 @@ class PetriEnvConfig:
         default_factory=_default_single_proc_time_rand_scale_map
     )
     # 单设备 WAIT 动作档位（秒）
-    single_wait_durations: List[int] = field(default_factory=_default_single_wait_durations)
+    single_wait_durations: List[int] = field(default_factory=_default_wait_durations)
 
     # 路线与晶圆分配（可选；无则用默认双路线）
     n_wafer_route1: Optional[int] = None
@@ -203,12 +203,12 @@ class PetriEnvConfig:
         lines.append(f"  done_event_reward: {self.done_event_reward}")
         lines.append(f"  finish_event_reward: {self.finish_event_reward}")
         lines.append(f"  scrap_event_penalty: {self.scrap_event_penalty}")
-        lines.append(f"  time_coef: {self.time_coef}")
+        lines.append(f"  time_coef: {self.time_coef_penalty}")
         
         # 其他参数
         lines.append("\n【其他参数】")
         lines.append(f"  c_congest: {self.c_congest}")
-        lines.append(f"  release_penalty_coef: {self.release_penalty_coef}")
+        lines.append(f"  release_penalty_coef: {self.release_event_penalty}")
         
         # 路线配置
         lines.append("\n【路线配置】")
@@ -245,17 +245,8 @@ class PetriEnvConfig:
             lines.append(f"  place_display_names: {self.place_display_names}")
         else:
             lines.append("  place_display_names: None")
-        
-        # 性能优化
-        lines.append("\n【性能优化】")
-        lines.append(f"  optimize_reward_calc: {self.optimize_reward_calc}")
-        lines.append(f"  optimize_enable_check: {self.optimize_enable_check}")
-        lines.append(f"  optimize_state_update: {self.optimize_state_update}")
-        lines.append(f"  cache_indices: {self.cache_indices}")
-        lines.append(f"  optimize_data_structures: {self.optimize_data_structures}")
-        lines.append(f"  turbo_mode: {self.turbo_mode}")
+
         lines.append(f"  single_robot_capacity: {self.single_robot_capacity}")
-        lines.append(f"  single_device_mode: {self.single_device_mode}")
         
         # 奖励配置
         lines.append("\n【奖励开关配置】")
