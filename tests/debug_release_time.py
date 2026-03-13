@@ -8,7 +8,7 @@ from solutions.Continuous_model.pn import Petri
 from data.petri_configs.env_config import PetriEnvConfig
 
 def main():
-    config = PetriEnvConfig(n_wafer=8, training_phase=2)
+    config = PetriEnvConfig(n_wafer=8)
     env = Petri(config=config)
     env.reset()
     

@@ -94,20 +94,17 @@ def example_5_phase_comparison():
     print("示例5: 对比两阶段配置")
     print("=" * 60)
     
-    # 阶段1
+    # 加载配置
     config1 = PetriEnvConfig.load("data/petri_configs/s_train.json")
     net1 = Petri(config=config1)
-    
-    # 阶段2
+
     config2 = PetriEnvConfig.load("data/petri_configs/phase2_config.json")
     net2 = Petri(config=config2)
-    
-    print("阶段1配置:")
-    print(f"  Training Phase: {net1.training_phase}")
+
+    print("配置1:")
     print(f"  Transport Penalty: {net1.reward_config['transport_penalty']}")
-    
-    print("\n阶段2配置:")
-    print(f"  Training Phase: {net2.training_phase}")
+
+    print("\n配置2:")
     print(f"  Transport Penalty: {net2.reward_config['transport_penalty']}")
 
 
@@ -130,7 +127,6 @@ def example_6_custom_reward_config():
     }
     
     config = PetriEnvConfig(
-        training_phase=2,
         reward_config=custom_reward,
         c_congest=100  # 增大堵塞惩罚系数
     )
@@ -151,9 +147,8 @@ def example_7_backward_compatibility():
     print("=" * 60)
     
     # 旧方式（仍然有效）
-    net = Petri(stop_on_scrap=True, training_phase=2)
-    
-    print(f"Training Phase: {net.training_phase}")
+    net = Petri(stop_on_scrap=True)
+
     print(f"Stop on Scrap: {net.stop_on_scrap}")
     print("旧代码仍然可以正常运行！")
 

@@ -14,7 +14,7 @@ def run_basic_test():
     print("基本功能测试")
     print("=" * 60)
     
-    config = PetriEnvConfig(n_wafer=12, training_phase=2)
+    config = PetriEnvConfig(n_wafer=12)
     env = Petri(config=config)
     env.reset()
     
@@ -44,7 +44,6 @@ def run_optimization_comparison():
     # 优化前
     config_old = PetriEnvConfig(
         n_wafer=4,
-        training_phase=2,
         turbo_mode=False,
         optimize_reward_calc=False,
         optimize_enable_check=False,
@@ -67,7 +66,6 @@ def run_optimization_comparison():
     np.random.seed(42)
     config_new = PetriEnvConfig(
         n_wafer=4,
-        training_phase=2,
         turbo_mode=True,
         optimize_reward_calc=True,
         optimize_enable_check=True,
@@ -110,7 +108,6 @@ def run_turbo_mode_test():
     
     config = PetriEnvConfig(
         n_wafer=4,
-        training_phase=2,
         turbo_mode=True,
         optimize_reward_calc=True,
         optimize_enable_check=True,

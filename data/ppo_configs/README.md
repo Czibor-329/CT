@@ -44,7 +44,6 @@ data/ppo_configs/
 ### 其他参数
 - `device`: 计算设备（"cpu" 或 "cuda"）
 - `seed`: 随机种子（默认: 42）
-- `training_phase`: 训练阶段（1或2）
 - `with_pretrain`: 是否使用预训练（默认: false）
 
 ## 使用方法
@@ -61,8 +60,7 @@ config = PPOTrainingConfig()
 config = PPOTrainingConfig(
     n_hidden=256,
     total_batch=200,
-    lr=5e-4,
-    training_phase=1
+    lr=5e-4
 )
 
 # 训练
@@ -103,7 +101,7 @@ config.save("data/ppo_configs/my_config.json")
 
 每次训练运行时，使用的配置会自动保存到 `training_runs/` 目录下，文件名格式为：
 ```
-config_phase{训练阶段}_{时间戳}.json
+config_ppo_{时间戳}.json
 ```
 
 这样可以追溯每次训练使用的具体配置参数。

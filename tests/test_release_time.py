@@ -114,7 +114,7 @@ class TestReleaseViolationCheck:
     
     def test_check_release_violation_no_violation_empty(self):
         """测试空队列不违规"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -130,7 +130,7 @@ class TestReleaseViolationCheck:
     
     def test_check_release_violation_no_violation_not_full(self):
         """测试队列未满不违规"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -149,7 +149,7 @@ class TestReleaseViolationCheck:
     
     def test_check_release_violation_no_violation_enter_after_release(self):
         """测试进入时间晚于最早释放时间不违规"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -169,7 +169,7 @@ class TestReleaseViolationCheck:
     
     def test_check_release_violation_violation(self):
         """测试队列满且进入时间早于最早释放时间违规"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -193,7 +193,7 @@ class TestReleaseTimeIntegration:
     
     def test_release_schedule_lifecycle(self):
         """测试释放时间记录的完整生命周期"""
-        config = PetriEnvConfig(n_wafer=2, training_phase=2)
+        config = PetriEnvConfig(n_wafer=2)
         env = Petri(config=config)
         env.reset()
         
@@ -220,7 +220,7 @@ class TestReleaseTimeIntegration:
     
     def test_s4_to_s5_transport_time_fix(self):
         """测试 s4->s5 运输时间修复"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -240,7 +240,7 @@ class TestReleaseTimeIntegration:
     
     def test_release_s4_none_warning(self):
         """测试 release_s4 为 None 时的警告"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -283,7 +283,7 @@ class TestReleaseScheduleTokensConsistency:
     
     def test_schedule_covers_tokens(self):
         """测试 release_schedule 覆盖所有 tokens"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -319,7 +319,7 @@ class TestReleaseScheduleTokensConsistency:
     
     def test_schedule_not_exceed_capacity(self):
         """测试 release_schedule 不超过容量（正常情况下）"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -348,7 +348,7 @@ class TestCompleteWorkflow:
     
     def test_complete_episode_with_release_check(self):
         """测试完整 episode 中的释放时间检查"""
-        config = PetriEnvConfig(n_wafer=4, training_phase=2)
+        config = PetriEnvConfig(n_wafer=4)
         env = Petri(config=config)
         env.reset()
         
@@ -382,7 +382,7 @@ class TestCompleteWorkflow:
     
     def test_release_time_prevents_conflict(self):
         """测试释放时间机制能预防容量冲突"""
-        config = PetriEnvConfig(n_wafer=6, training_phase=2)
+        config = PetriEnvConfig(n_wafer=6)
         env = Petri(config=config)
         env.reset()
         

@@ -116,7 +116,6 @@ class Place:
 class Petri:
     def __init__(self, config: Optional[PetriEnvConfig] = None,
                  stop_on_scrap: Optional[bool] = None,
-                 training_phase: Optional[int] = None,
                  reward_config: Optional[Dict[str, int]] = None,
                  enable_statistics: bool = False) -> None:
         """
@@ -131,7 +130,6 @@ class Petri:
         Args:
             config: PetriEnvConfig配置对象（推荐使用）
             stop_on_scrap: 报废时是否停止（如果config为None时使用）
-            training_phase: 训练阶段（如果config为None时使用）
             reward_config: 奖励配置（如果config为None时使用）
         """
         # -----------------------
@@ -142,8 +140,6 @@ class Petri:
             kwargs = {}
             if stop_on_scrap is not None:
                 kwargs['stop_on_scrap'] = stop_on_scrap
-            if training_phase is not None:
-                kwargs['training_phase'] = training_phase
             if reward_config is not None:
                 kwargs['reward_config'] = reward_config
             config = PetriEnvConfig(**kwargs)
@@ -171,7 +167,6 @@ class Petri:
         self.idle_penalty = config.idle_penalty
         # idle_timeout 在 marks 就绪后设为 最大处理时间+30，见下方
         self.stop_on_scrap = config.stop_on_scrap
-        self.training_phase = config.training_phase
         self.reward_config = config.reward_config
         
         # ============ 性能优化配置 ============

@@ -68,11 +68,7 @@ def train(
     saved_configs_dir = os.path.join("data", "ppo_configs", "training_runs")
     os.makedirs(saved_configs_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # 检查是否有 training_phase 属性
-    if hasattr(config, 'training_phase') and config.training_phase is not None:
-        config_prefix = f"config_phase{config.training_phase}"
-    else:
-        config_prefix = "config_tdpn"
+    config_prefix = "config_ppo"
     config_save_path = os.path.join(saved_configs_dir, f"{config_prefix}_{timestamp}.json")
     config.save(config_save_path)
     
@@ -88,18 +84,9 @@ def train(
     
     # 初始化最佳奖励追踪
     best_reward = float('-inf')
-    # 检查是否有 training_phase 属性（CT_v2 环境没有此属性）
-    if hasattr(config, 'training_phase') and config.training_phase is not None:
-        model_prefix = f"CT_phase{config.training_phase}"
-        print(f"\n[Training Phase {config.training_phase}]")
-        if config.training_phase == 1:
-            print("  -> 仅考虑报废惩罚（加工腔室超时）")
-        else:
-            print("  -> 完整奖励（加工腔室超时 + 运输位超时）")
-    else:
-        model_prefix = "CT_tdpn"
-        print(f"\n[Td_petri Training]")
-        print("  -> Chain-based 动作空间")
+    model_prefix = "CT_ppo"
+    print("\n[PPO Training]")
+    print("  -> 完整奖励（加工腔室超时 + 运输位超时）")
     best_model_path = os.path.join(saved_models_dir, f"{model_prefix}_best.pt")
     print(f"  -> Backup folder: {backup_dir}")
 

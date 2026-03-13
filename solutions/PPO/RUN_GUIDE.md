@@ -27,17 +27,12 @@ python solutions/PPO/run_ppo.py --config data/ppo_configs/my_config.json
 ### 4. 自动两阶段课程学习训练
 
 ```bash
-python solutions/PPO/run_ppo.py --auto-phase2
+python solutions/PPO/run_ppo.py
 ```
 
 ## 命令行参数详解
 
 ### 基础参数
-
-- `--phase {1,2}`: 训练阶段
-  - `1`: 仅考虑报废惩罚（加工腔室超时）
-  - `2`: 完整奖励（加工腔室超时 + 运输位超时）
-  - 默认值: `2`
 
 - `--device {cpu,cuda}`: 计算设备
   - `cpu`: 使用CPU训练
@@ -47,22 +42,16 @@ python solutions/PPO/run_ppo.py --auto-phase2
 ### 配置相关
 
 - `--config PATH`: 指定配置文件路径
-  - 示例: `--config data/ppo_configs/phase1_config.json`
-  - 如果不指定，会自动尝试加载 `data/ppo_configs/phase{N}_config.json`
-  - 如果预设配置也不存在，使用默认配置
+  - 示例: `--config data/ppo_configs/my_config.json`
+  - 如果不指定，使用 `data/ppo_configs/phase2_config.json`
 
 ### 训练控制
 
-- `--checkpoint PATH`: 从checkpoint继续训练
-  - 示例: `--checkpoint solutions/PPO/saved_models/CT_phase1_latest.pt`
-  - 阶段2会自动检测并加载阶段1的checkpoint
+- `--checkpoint PATH`: 从 checkpoint 继续训练
+  - 示例: `--checkpoint solutions/PPO/saved_models/CT_ppo_best.pt`
 
 - `--with-pretrain`: 启用行为克隆预训练
   - 默认: 不启用
-
-- `--auto-phase2`: 自动执行两阶段训练
-  - 先训练阶段1，保存模型
-  - 再加载阶段1模型训练阶段2
 
 ## 使用示例
 
@@ -103,11 +92,10 @@ python solutions/PPO/run_ppo.py \
 
 ```bash
 # 使用默认配置
-python solutions/PPO/run_ppo.py --auto-phase2
+python solutions/PPO/run_ppo.py
 
 # 使用自定义配置
 python solutions/PPO/run_ppo.py \
-    --auto-phase2 \
     --config data/ppo_configs/my_config.json \
     --device cuda
 ```
@@ -116,9 +104,8 @@ python solutions/PPO/run_ppo.py \
 
 ```bash
 python solutions/PPO/run_ppo.py \
-    --phase 2 \
-    --checkpoint solutions/PPO/saved_models/CT_phase2_20260122_143000.pt \
-    --config data/ppo_configs/training_runs/config_phase2_20260122_143000.json
+    --checkpoint solutions/PPO/saved_models/CT_ppo_20260122_143000.pt \
+    --config data/ppo_configs/training_runs/config_ppo_20260122_143000.json
 ```
 
 ## 配置优先级
@@ -127,33 +114,29 @@ python solutions/PPO/run_ppo.py \
 
 1. **命令行参数** (最高优先级)
 2. **配置文件参数**
-3. **预设配置文件** (`data/ppo_configs/phase{N}_config.json`)
+3. **预设配置文件** (`data/ppo_configs/phase2_config.json`)
 4. **默认配置** (最低优先级)
 
 例如：
 ```bash
 python solutions/PPO/run_ppo.py \
-    --config data/ppo_configs/s_trains_train.json \
-    --phase 2 \
+    --config data/ppo_configs/my_config.json \
     --device cuda
 ```
 
-这会：
-- 从 `phase1_config.json` 加载基础配置
-- 将 `training_phase` 覆盖为 `2`（命令行指定）
-- 将 `device` 覆盖为 `cuda`（命令行指定）
+这会使用指定配置并覆盖 `device` 为 `cuda`。
 
 ## 训练输出
 
 ### 模型保存位置
 
-- 时间戳模型: `solutions/PPO/saved_models/CT_phase{N}_{timestamp}.pt`
-- 最新模型: `solutions/PPO/saved_models/CT_phase{N}_latest.pt`
+- 最佳模型: `solutions/PPO/saved_models/CT_ppo_best.pt`
+- 时间戳备份: `solutions/PPO/saved_models/{timestamp}/`
 
 ### 配置保存位置
 
 每次训练使用的配置会自动保存到:
-- `data/ppo_configs/training_runs/config_phase{N}_{timestamp}.json`
+- `data/ppo_configs/training_runs/config_ppo_{timestamp}.json`
 
 ### 训练日志
 
@@ -182,8 +165,7 @@ config = PPOTrainingConfig(
     n_hidden=256,
     n_layer=5,
     total_batch=300,
-    lr=5e-4,
-    training_phase=1
+    lr=5e-4
 )
 
 # 保存配置

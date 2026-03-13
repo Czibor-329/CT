@@ -294,6 +294,12 @@ python -m solutions.Continuous_model.export_inference_sequence \
   --force-overwrite-planb
 ```
 
+### single 模式重试策略（更新）
+
+- What changed：`single`/`cascade` 导出时，重试策略改为“第 1 次使用确定性 `MODE`，后续重试自动切换为随机采样 `RANDOM`”。
+- Why：部分单设备权重在确定性推理下会稳定走向 `scrap` 终止，仅增加 `seed` 但保持 `MODE` 不能有效跳出失败轨迹。
+- Impact：当首轮未 `finish` 时，后续重试可探索不同合法动作，显著提高导出可完成序列的概率；首轮成功时行为不变。
+
 ### 输出位置
 
 - `solutions/Continuous_model/action_series/concurrent_infer_seq_<timestamp>.json`

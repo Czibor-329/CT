@@ -44,15 +44,14 @@ class Env_PN_Concurrent(EnvBase):
         "u_s2_s3", "u_s3_s4", "t_s3", "t_s4"
     ]
 
-    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False, training_phase: int = 2,
+    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False,
                  reward_config: Optional[Dict[str, int]] = None):
         super().__init__(device=device)
-        self.training_phase = training_phase
 
-        # 加载配置
+        # 加载配置（固定使用 phase2_config.json）
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.join(script_dir, "..", "..")
-        config_path = os.path.join(project_root, "data", "petri_configs", f"phase{training_phase}_config.json")
+        config_path = os.path.join(project_root, "data", "petri_configs", "phase2_config.json")
         config_path = os.path.abspath(config_path)
 
         if not os.path.exists(config_path):

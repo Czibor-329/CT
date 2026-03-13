@@ -186,15 +186,9 @@
   - **现象**：前道工序的启动时刻依赖于后道工序的释放时刻（FFSJ 特性）。
   - **对策**：只有确定了下游工序的结束时间，才能回推上游工序的最优启动点。
 
-### 两阶段课程学习训练
+### PPO 训练
 
-为降低强化学习的难度，采用两阶段课程学习（Curriculum Learning）策略：
-
-**阶段划分：**
-| 阶段 | `training_phase` | 奖励结构 | 目标 |
-|------|-----------------|---------|------|
-| Phase 1 | 1 | `R_scrap` + `overtime_penalty` | 学习避免晶圆报废（加工腔室超时） |
-| Phase 2 | 2 | Phase 1 + `transport_penalty` | 在避免报废的基础上，学习优化运输位停留时间 |
+使用完整奖励配置进行训练（加工腔室超时 + 运输位超时）：
 
 **奖励组件说明：**
 - `R_scrap`：晶圆报废惩罚（超过 `proc_time + P_Residual_time` 后触发）
@@ -203,19 +197,18 @@
 
 **使用方式：**
 ```bash
-# Phase 1: 仅报废惩罚
-python -m solutions.PPO.run_ppo --phase 1
+# 使用默认配置 (phase2_config.json) 训练
+python -m solutions.PPO.run_ppo
 
-# Phase 2: 加载 Phase 1 checkpoint 继续训练
-python -m solutions.PPO.run_ppo --phase 2
+# 使用自定义配置
+python -m solutions.PPO.run_ppo --config data/ppo_configs/custom/my_config.json
 
-# 自动两阶段训练（先 Phase 1，再 Phase 2）
-python -m solutions.PPO.run_ppo --auto-phase2
+# 从 checkpoint 继续训练
+python -m solutions.PPO.run_ppo --checkpoint solutions/PPO/saved_models/CT_ppo_best.pt
 ```
 
 **checkpoint 文件位置：**
-- Phase 1 模型：`solutions/PPO/saved_models/CT_phase1_latest.pt`
-- Phase 2 模型：`solutions/PPO/saved_models/CT_phase2_latest.pt`
+- 最佳模型：`solutions/PPO/saved_models/CT_ppo_best.pt`
 
 ## Important Constraints
 - **计算资源**：强化学习训练需要较长计算时间，建议使用 GPU 加速

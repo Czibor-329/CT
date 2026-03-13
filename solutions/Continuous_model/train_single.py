@@ -146,7 +146,6 @@ def collect_rollout_single(
 
 def train_single(
     config: PPOTrainingConfig | None = None,
-    training_phase: int = 2,
     checkpoint_path: str | None = None,
     device_mode: str = "single",
     proc_time_rand_enabled: bool | None = None,
@@ -156,13 +155,12 @@ def train_single(
 ):
     assert config is not None, "training config must be provided"
 
-    print(f"[Single PPO Training - Phase {training_phase}]")
+    print("[Single PPO Training]")
     print(config)
 
     torch.manual_seed(config.seed)
     device = config.device
     env = Env_PN_Single(
-        training_phase=training_phase,
         detailed_reward=True,
         device_mode=device_mode,
         proc_time_rand_enabled=proc_time_rand_enabled,
@@ -210,7 +208,7 @@ def train_single(
     backup_dir = os.path.join(saved_models_dir, f"single_{timestamp}")
     os.makedirs(backup_dir, exist_ok=True)
 
-    model_prefix = f"CT_single_phase{training_phase}"
+    model_prefix = "CT_single"
     best_model_path = Path(__file__).resolve().parents[2] / "models" / "tmp.pt"
     best_reward = float("-inf")
     log = defaultdict(list)
@@ -318,8 +316,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="单设备单动作 PPO 训练（两阶段 release 回填）")
     parser.add_argument("--device", type=str, default="single", choices=["single", "cascade"], help="设备模式")
-    parser.add_argument("--phase", type=int, default=2, help="训练阶段 (1 or 2)")
-    parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint路径")
+    parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint 路径")
     parser.add_argument("--proc-time-rand-enabled", action="store_true", help="开启单设备工序时间随机扰动")
     args = parser.parse_args()
 
@@ -330,8 +327,7 @@ if __name__ == "__main__":
     checkpoint_path = root / "models" / args.checkpoint
     train_single(
         config=cfg,
-        training_phase=args.phase,
-        checkpoint_path=args.checkpoint,
+        checkpoint_path=checkpoint_path,
         device_mode=args.device,
         proc_time_rand_enabled=True if args.proc_time_rand_enabled else None,
     )

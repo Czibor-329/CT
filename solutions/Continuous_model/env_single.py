@@ -26,7 +26,6 @@ class Env_PN_Single(EnvBase):
         device: str = "cpu",
         seed=None,
         detailed_reward: bool = False,
-        training_phase: int = 2,
         device_mode: str = "single",
         reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
@@ -38,7 +37,6 @@ class Env_PN_Single(EnvBase):
         proc_time_rand_max_scale: Optional[float] = None,
     ):
         super().__init__(device=device)
-        self.training_phase = training_phase
         self.detailed_reward = detailed_reward
 
         dir = Path(__file__).parents[2] / "data" / "petri_configs"

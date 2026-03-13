@@ -55,7 +55,7 @@ class PetriEnvConfig:
         - print(repr(config)) 或 config.format(detailed=True)：详细模式，显示所有配置项
         
     示例：
-        >>> config = PetriEnvConfig(n_wafer=12, training_phase=2)
+        >>> config = PetriEnvConfig(n_wafer=12)
         >>> print(config)  # 简略模式
         >>> print(config.format(detailed=True))  # 详细模式
     """
@@ -78,7 +78,6 @@ class PetriEnvConfig:
 
     idle_penalty: int = 10
     stop_on_scrap: bool = True
-    training_phase: int = 2
     max_wafers_in_system: int = 7
     
     # 奖励计算系数
@@ -167,7 +166,6 @@ class PetriEnvConfig:
         """简略模式：显示关键配置项"""
         lines = ["PetriEnvConfig (简略模式):"]
         lines.append(f"  晶圆数: {self.n_wafer}")
-        lines.append(f"  训练阶段: {self.training_phase}")
         lines.append(f"  停止条件: stop_on_scrap={self.stop_on_scrap}")
         
         # 路线配置
@@ -228,7 +226,6 @@ class PetriEnvConfig:
         # 基础配置
         lines.append("\n【基础配置】")
         lines.append(f"  n_wafer: {self.n_wafer}")
-        lines.append(f"  training_phase: {self.training_phase}")
         lines.append(f"  stop_on_scrap: {self.stop_on_scrap}")
         lines.append(f" max_wafers: {self.max_wafers_in_system}")
         

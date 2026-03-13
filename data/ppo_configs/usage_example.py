@@ -33,7 +33,6 @@ def example_2_use_custom_config():
         n_layer=5,              # 增加层数
         total_batch=200,        # 增加训练批次
         lr=5e-4,                # 调整学习率
-        training_phase=1,       # 阶段1训练
         device="cuda",          # 使用GPU
         with_pretrain=True,     # 启用预训练
     )

@@ -128,70 +128,30 @@ if scrap:
 
 
 
-### 训练：两阶段课程学习训练
+### 训练：PPO 完整奖励训练
 
-#### 训练阶段划分
+统一使用完整奖励配置（加工腔室超时 + 运输位超时）进行训练。
 
-为降低强化学习的难度，采用**两阶段课程学习**（Curriculum Learning）策略：
+**奖励组件**：
+- `proc_reward`（加工奖励）
+- `penalty`（加工腔室超时惩罚）
+- `scrap_penalty`（报废惩罚）
+- `transport_penalty`（运输位超时惩罚）
+- `time_cost`（时间成本）
+- `finish_bonus`（完工奖励）
 
-**Phase 1：仅考虑加工腔室报废惩罚**
-
-- **训练目标**：学习避免晶圆在 PM1/PM2 中超时报废
-- **奖励组件**：
-  - `proc_reward`（加工奖励）
-  - `penalty`（加工腔室超时惩罚）
-  - `scrap_penalty`（报废惩罚）
-  - `time_cost`（时间成本）
-  - `finish_bonus`（完工奖励）
-- **不包含**：运输位超时惩罚（`transport_penalty` = 0）
-- **Checkpoint**：`solutions/PPO/saved_models/CT_phase1_latest.pt`
-- **训练参数**：`training_phase=1`
-
-**Phase 2：完整奖励（加工腔室 + 运输位超时）**
-
-- **训练目标**：在避免报废的基础上，优化运输位停留时间
-- **奖励组件**：Phase 1 的所有组件 + `transport_penalty`（运输位超时惩罚）
-- **初始化**：加载 Phase 1 的 checkpoint 继续训练
-- **Checkpoint**：`solutions/PPO/saved_models/CT_phase2_latest.pt`
-- **训练参数**：`training_phase=2`
-
-#### 训练命令
+**训练命令**
 
 ```bash
-# Phase 1: 仅报废惩罚
-python -m solutions.PPO.run_ppo --phase 1
+# 使用默认配置训练
+python -m solutions.PPO.run_ppo
 
-# Phase 2: 加载 Phase 1 checkpoint 继续训练
-python -m solutions.PPO.run_ppo --phase 2
+# 使用自定义配置
+python -m solutions.PPO.run_ppo --config data/ppo_configs/custom/my_config.json
 
-# 自动两阶段训练（先 Phase 1，再 Phase 2）
-python -m solutions.PPO.run_ppo --auto-phase2
-
-# 使用可视化工具测试模型
-python -m solutions.Continuous_model.test_env --model solutions/PPO/saved_models/CT_phase2_latest.pt
+# 从 checkpoint 继续训练
+python -m solutions.PPO.run_ppo --checkpoint solutions/PPO/saved_models/CT_ppo_best.pt
 ```
-
-#### 设计动机
-
-**为什么需要两阶段训练？**
-
-1. **降低学习难度**：
-   - 同时学习报废约束和运输超时约束会导致奖励信号复杂，难以收敛
-   - Phase 1 专注于主要约束（报废），简化学习目标
-   - Phase 2 在已有基础上微调次要约束（运输超时）
-
-2. **加速收敛**：
-   - Phase 1 提供良好的策略初始化（已学会避免报废）
-   - Phase 2 从非随机策略开始，收敛速度更快
-
-3. **避免局部最优**：
-   - 分阶段学习防止智能体陷入"只优化某个约束而忽略其他约束"的局部最优
-   - Phase 1 确保基础约束满足，Phase 2 在此基础上优化性能
-
-**实验结果**：
-
-- Phase 1 训练后，智能体基本可以避免晶圆报废（报废率 < 5%）
-- Phase 2 训练后，运输位停留时间显著减少，makespan 进一步优化
 
 ### 核心文件
 

@@ -19,7 +19,6 @@ class TestFunctionality:
         # 优化前
         config_old = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=False,
             optimize_reward_calc=False,
             optimize_enable_check=False,
@@ -32,7 +31,6 @@ class TestFunctionality:
         # 优化后
         config_new = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_reward_calc=True,
             optimize_enable_check=True,
@@ -93,7 +91,6 @@ class TestFunctionality:
         # 优化前（禁用所有优化）
         config_old = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=False,
             optimize_reward_calc=False,
             optimize_enable_check=False,
@@ -105,7 +102,6 @@ class TestFunctionality:
         # 优化后（启用向量化奖励计算，但不启用 turbo_mode）
         config_new = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=False,  # turbo_mode 使用简化奖励，不参与一致性测试
             optimize_reward_calc=True,
             optimize_enable_check=True,
@@ -155,7 +151,6 @@ class TestFunctionality:
         # 优化前
         config_old = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=False,
             optimize_reward_calc=False,
             optimize_enable_check=False,
@@ -167,7 +162,6 @@ class TestFunctionality:
         # 优化后
         config_new = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_reward_calc=True,
             optimize_enable_check=True,
@@ -235,7 +229,6 @@ class TestFunctionality:
         # 禁用所有优化
         config_disabled = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=False,
             optimize_reward_calc=False,
             optimize_enable_check=False,
@@ -248,7 +241,6 @@ class TestFunctionality:
         # 未优化版本（使用默认配置，假设默认也是禁用优化）
         config_default = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2
         )
         env_default = Petri(config=config_default)
         env_default.reset()
@@ -285,7 +277,6 @@ class TestFunctionality:
         # 仅启用 002-sim-speedup (baseline)
         config_baseline = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=False,  # 禁用数据结构优化
         )
@@ -295,7 +286,6 @@ class TestFunctionality:
         # 启用 002-sim-speedup + 数据结构优化
         config_optimized = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=True,  # 启用数据结构优化
         )
@@ -354,7 +344,6 @@ class TestFunctionality:
         # 仅启用 002-sim-speedup
         config_baseline = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=False,
         )
@@ -364,7 +353,6 @@ class TestFunctionality:
         # 启用 002-sim-speedup + 数据结构优化
         config_optimized = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=True,
         )
@@ -411,7 +399,6 @@ class TestFunctionality:
         # 仅启用 002-sim-speedup
         config_baseline = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=False,
         )
@@ -421,7 +408,6 @@ class TestFunctionality:
         # 启用 002-sim-speedup + 数据结构优化
         config_optimized = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=True,
         )
@@ -472,7 +458,6 @@ class TestFunctionality:
         # 仅启用 002-sim-speedup
         config_baseline = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=False,
         )
@@ -482,7 +467,6 @@ class TestFunctionality:
         # 启用 002-sim-speedup + 数据结构优化
         config_optimized = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,
             optimize_data_structures=True,
         )
@@ -534,7 +518,6 @@ class TestFunctionality:
         """
         config = PetriEnvConfig(
             n_wafer=4,
-            training_phase=2,
             turbo_mode=True,  # 启用 002-sim-speedup
             optimize_data_structures=True,  # 启用数据结构优化
         )

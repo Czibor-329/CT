@@ -123,7 +123,7 @@ class Env_PN(EnvBase):
     metadata = {'render.modes': ['human', 'rgb_array'], "reder_fps": 30}
     batch_locked = False
 
-    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False, training_phase: int = 2,
+    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False,
                  reward_config: Optional[Dict[str, int]] = None):
         """
         初始化连续 Petri 网环境。
@@ -132,9 +132,6 @@ class Env_PN(EnvBase):
             device: 计算设备
             seed: 随机种子
             detailed_reward: 是否使用详细奖励模式
-            training_phase: 训练阶段
-                - 1: 仅考虑报废惩罚（加工腔室超时）
-                - 2: 完整奖励（加工腔室超时 + 运输位超时）
             reward_config: 奖励开关配置字典，1=启用，0=禁用
                 - 'proc_reward': 加工奖励
                 - 'safe_reward': 安全裕量奖励
@@ -145,12 +142,11 @@ class Env_PN(EnvBase):
                 - 'time_cost': 时间成本
         """
         super().__init__(device=device)
-        self.training_phase = training_phase
-        
-        # 使用相对路径（跨平台兼容）
+
+        # 使用相对路径，固定加载 phase2_config.json
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.join(script_dir, "..", "..")
-        config_path = os.path.join(project_root, "data", "petri_configs", f"phase{training_phase}_config.json")
+        config_path = os.path.join(project_root, "data", "petri_configs", "phase2_config.json")
         config_path = os.path.abspath(config_path)
         
         if not os.path.exists(config_path):

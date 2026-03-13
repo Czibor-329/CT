@@ -31,9 +31,6 @@ class PPOTrainingConfig:
     device: str = "cpu"
     seed: int = 42
     
-    # 训练阶段和预训练
-    training_phase: int = 2
-    
     @property
     def frames_per_batch(self) -> int:
         """计算每个batch的帧数"""

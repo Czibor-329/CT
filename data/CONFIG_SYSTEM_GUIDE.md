@@ -10,8 +10,7 @@ data/
 │   ├── __init__.py
 │   ├── training_config.py    # PPO训练配置类
 │   ├── default_config.json   # 默认PPO配置
-│   ├── phase1_config.json    # 阶段1 PPO配置
-│   ├── phase2_config.json    # 阶段2 PPO配置
+│   ├── phase2_config.json    # PPO 配置
 │   ├── training_runs/        # 训练运行配置记录
 │   ├── usage_example.py      # 使用示例
 │   └── README.md             # 详细说明
@@ -20,8 +19,7 @@ data/
 │   ├── __init__.py
 │   ├── env_config.py         # 环境配置类
 │   ├── default_config.json   # 默认环境配置
-│   ├── phase1_config.json    # 阶段1环境配置
-│   ├── phase2_config.json    # 阶段2环境配置
+│   ├── phase2_config.json    # 环境配置
 │   ├── usage_example.py      # 使用示例
 │   └── README.md             # 详细说明
 │
@@ -76,44 +74,23 @@ config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 net = Petri(config=config)
 ```
 
-## 🔄 两阶段课程学习
+## 🔄 PPO 训练
 
-本项目采用两阶段课程学习策略：
-
-### 阶段1: 基础训练（仅报废惩罚）
-
-**目标**: 让模型学习避免基本错误（加工腔室超时）
-
-**配置:**
-- PPO: `data/ppo_configs/phase1_config.json`
-- Petri: `data/petri_configs/phase1_config.json`
-- 特点: `training_phase=1`, `transport_penalty=0`
-
-**运行:**
-```bash
-python solutions/PPO/run_ppo.py --phase 1
-```
-
-### 阶段2: 高级训练（完整奖励）
-
-**目标**: 在阶段1基础上，优化运输位使用
+使用完整奖励配置进行训练：
 
 **配置:**
 - PPO: `data/ppo_configs/phase2_config.json`
 - Petri: `data/petri_configs/phase2_config.json`
-- 特点: `training_phase=2`, `transport_penalty=1`
 
 **运行:**
 ```bash
-python solutions/PPO/run_ppo.py --phase 2
-# 自动加载阶段1的checkpoint继续训练
-```
+python solutions/PPO/run_ppo.py
 
-### 自动两阶段训练
+# 使用自定义配置
+python solutions/PPO/run_ppo.py --config data/ppo_configs/my_config.json
 
-```bash
-python solutions/PPO/run_ppo.py --auto-phase2
-# 自动执行 Phase 1 -> Phase 2
+# 从 checkpoint 继续训练
+python solutions/PPO/run_ppo.py --checkpoint solutions/PPO/saved_models/CT_ppo_best.pt
 ```
 
 ## 📝 配置文件管理最佳实践
@@ -123,8 +100,7 @@ python solutions/PPO/run_ppo.py --auto-phase2
 每次训练会自动保存配置快照到 `training_runs/`：
 ```
 data/ppo_configs/training_runs/
-├── config_phase1_20260122_143000.json
-├── config_phase2_20260122_150000.json
+├── config_ppo_20260122_143000.json
 └── ...
 ```
 
@@ -145,8 +121,7 @@ config.save("data/ppo_configs/experiment_01.json")
 config = PPOTrainingConfig(
     n_hidden=256,
     total_batch=200,
-    lr=1e-3,
-    training_phase=1
+    lr=1e-3
 )
 config.save("data/ppo_configs/experiment_02.json")
 ```
@@ -159,8 +134,7 @@ for lr in [1e-3, 5e-4, 1e-4]:
     for n_hidden in [64, 128, 256]:
         config = PPOTrainingConfig(
             lr=lr,
-            n_hidden=n_hidden,
-            training_phase=1
+            n_hidden=n_hidden
         )
         config.save(f"data/ppo_configs/sweep_lr{lr}_h{n_hidden}.json")
 ```
@@ -171,13 +145,13 @@ for lr in [1e-3, 5e-4, 1e-4]:
 
 ```bash
 # 基础用法
-python solutions/PPO/run_ppo.py --phase 1
+python solutions/PPO/run_ppo.py
 
 # 使用自定义配置
 python solutions/PPO/run_ppo.py --config data/ppo_configs/my_config.json
 
-# GPU训练
-python solutions/PPO/run_ppo.py --phase 1 --device cuda
+# GPU 训练
+python solutions/PPO/run_ppo.py --device cuda
 
 # 使用预训练
 python solutions/PPO/run_ppo.py --phase 1 --with-pretrain
@@ -229,8 +203,7 @@ for key in dict1:
   "total_batch": 50,
   "sub_batch_size": 32,
   "num_epochs": 5,
-  "lr": 1e-3,
-  "training_phase": 1
+  "lr": 1e-3
 }
 ```
 
@@ -243,8 +216,7 @@ for key in dict1:
   "total_batch": 300,
   "sub_batch_size": 128,
   "num_epochs": 20,
-  "lr": 5e-5,
-  "training_phase": 2
+  "lr": 5e-5
 }
 ```
 
@@ -256,7 +228,6 @@ for key in dict1:
   "time_coef": 1.0,
   "R_done": 200,
   "R_scrap": 150,
-  "training_phase": 2,
   "reward_config": {
     "proc_reward": 1,
     "safe_reward": 0,
@@ -298,14 +269,10 @@ except Exception as e:
 ### 检查配置一致性
 
 ```python
-# 确保训练阶段一致
+# 加载配置并验证
 ppo_config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
 env_config = PetriEnvConfig.load("data/petri_configs/s_train.json")
-
-assert ppo_config.training_phase == env_config.training_phase, \
-    "PPO和环境的训练阶段必须一致！"
-
-print(f"✓ 配置一致性检查通过 (Phase {ppo_config.training_phase})")
+print("✓ 配置加载成功")
 ```
 
 ## 📚 参考文档
@@ -347,8 +314,8 @@ config.save('data/ppo_configs/my_exp.json')
 # 2. 使用自定义配置训练
 python solutions/PPO/run_ppo.py --config data/ppo_configs/my_exp.json
 
-# 3. 自动两阶段训练
-python solutions/PPO/run_ppo.py --auto-phase2 --device cuda
+# 3. GPU 训练
+python solutions/PPO/run_ppo.py --device cuda
 ```
 
 ## ⚠️ 常见问题
@@ -363,7 +330,7 @@ python solutions/PPO/run_ppo.py --auto-phase2 --device cuda
 **A**: 查看 `data/ppo_configs/training_runs/` 找到对应时间戳的配置文件
 
 ### Q4: 两个配置系统如何协同？
-**A**: PPO配置管理训练过程，Petri配置管理环境参数，确保两者的 `training_phase` 一致
+**A**: PPO 配置管理训练过程，Petri 配置管理环境参数
 
 ## 💡 小贴士
 

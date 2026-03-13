@@ -16029,7 +16029,6 @@
     "single_proc_time_rand_enabled": false,
     "single_robot_capacity": 1,
     "single_route_code": 1,
-    "single_device_mode": "single",
-    "training_phase": 2
+    "single_device_mode": "single"
   }
 }

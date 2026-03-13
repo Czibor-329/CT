@@ -7,8 +7,7 @@ data/petri_configs/
 ├── __init__.py                 # 模块初始化文件
 ├── env_config.py               # 配置类定义
 ├── default_config.json         # 默认配置
-├── phase1_config.json          # 阶段1配置（仅报废惩罚）
-├── phase2_config.json          # 阶段2配置（完整奖励）
+├── phase2_config.json          # PPO 环境配置（完整奖励）
 ├── usage_example.py            # 使用示例
 └── README.md                   # 本说明文件
 ```
@@ -48,14 +47,13 @@ data/petri_configs/
 
 ### 训练控制参数
 - `stop_on_scrap`: 报废时是否停止（默认: true）
-- `training_phase`: 训练阶段（1=仅报废惩罚，2=完整奖励）（默认: 2）
 
 ### 奖励开关配置
 - `proc_reward`: 加工奖励（1=启用，0=禁用）
 - `safe_reward`: 安全裕量奖励
 - `penalty`: 加工腔室超时惩罚
 - `warn_penalty`: 预警惩罚
-- `transport_penalty`: 运输位超时惩罚（phase 1时为0）
+- `transport_penalty`: 运输位超时惩罚
 - `congestion_penalty`: 堵塞预测惩罚
 - `time_cost`: 时间成本
 - `release_violation_penalty`: 释放时间违规惩罚
@@ -80,8 +78,7 @@ from solutions.Continuous_model.pn import Petri
 # 创建配置
 config = PetriEnvConfig(
     n_wafer=6,
-    R_done=200,
-    training_phase=1
+    R_done=200
 )
 
 # 使用配置创建环境
@@ -107,7 +104,7 @@ net = Petri(config=config)
 from solutions.Continuous_model.pn import Petri
 
 # 旧方式仍然有效
-net = Petri(stop_on_scrap=True, training_phase=2)
+net = Petri(stop_on_scrap=True)
 ```
 
 ## 保存和加载配置
@@ -135,39 +132,19 @@ config = PetriEnvConfig.load("data/petri_configs/my_config.json")
 print(config)
 ```
 
-## 两阶段课程学习
-
-### 阶段1：仅报废惩罚
+## 配置示例
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn import Petri
 
-# 加载阶段1配置
+# 加载配置
 config = PetriEnvConfig.load("data/petri_configs/s_train.json")
 
 # 创建环境
 net = Petri(config=config)
 
 # 验证配置
-print(f"Training Phase: {net.training_phase}")
-print(f"Transport Penalty: {net.reward_config['transport_penalty']}")
-```
-
-### 阶段2：完整奖励
-
-```python
-from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.pn import Petri
-
-# 加载阶段2配置
-config = PetriEnvConfig.load("data/petri_configs/phase2_config.json")
-
-# 创建环境
-net = Petri(config=config)
-
-# 验证配置
-print(f"Training Phase: {net.training_phase}")
 print(f"Transport Penalty: {net.reward_config['transport_penalty']}")
 ```
 
@@ -190,7 +167,6 @@ custom_reward_config = {
 }
 
 config = PetriEnvConfig(
-    training_phase=2,
     reward_config=custom_reward_config
 )
 
@@ -199,29 +175,9 @@ net = Petri(config=config)
 
 ## 配置文件示例
 
-### phase1_config.json
 ```json
 {
   "n_wafer": 4,
-  "training_phase": 1,
-  "reward_config": {
-    "proc_reward": 1,
-    "safe_reward": 1,
-    "penalty": 1,
-    "warn_penalty": 1,
-    "transport_penalty": 0,
-    "congestion_penalty": 0,
-    "time_cost": 1,
-    "release_violation_penalty": 1
-  }
-}
-```
-
-### phase2_config.json
-```json
-{
-  "n_wafer": 4,
-  "training_phase": 2,
   "reward_config": {
     "proc_reward": 1,
     "safe_reward": 1,
@@ -254,4 +210,4 @@ env = Env_PN(device="cpu", petri_config=petri_config)
 2. **版本控制**: 将配置文件纳入版本控制
 3. **参数调优**: 复制预设配置文件，修改后保存为新文件
 4. **文档记录**: 在配置文件中使用注释说明修改原因
-5. **一致性**: 确保PPO训练配置和Petri环境配置的训练阶段一致
+5. **一致性**: 确保 PPO 训练配置和 Petri 环境配置一致

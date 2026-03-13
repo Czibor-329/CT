@@ -172,7 +172,6 @@ def run_sequence(sequence_path: Path, results_dir: Path) -> Path:
     seq, replay_env_overrides, resolved_sequence_path = _load_sequence(sequence_path)
     env = Env_PN_Single(
         seed=0,
-        training_phase=int(replay_env_overrides.get("training_phase", 2)),
         device_mode=str(replay_env_overrides.get("single_device_mode", "single")),
         robot_capacity=int(replay_env_overrides.get("single_robot_capacity", 1)),
         route_code=int(replay_env_overrides.get("single_route_code", 0)),

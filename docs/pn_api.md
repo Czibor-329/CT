@@ -30,7 +30,6 @@
 Petri(
     config: Optional[PetriEnvConfig] = None,
     stop_on_scrap: Optional[bool] = None,
-    training_phase: Optional[int] = None,
     reward_config: Optional[Dict[str, int]] = None
 )
 ```

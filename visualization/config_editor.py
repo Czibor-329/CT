@@ -66,7 +66,6 @@ class ConfigEditor(QWidget):
         self.fields["n_wafer_route1"] = self._spin(0, 1000, 8)
         self.fields["n_wafer_route2"] = self._spin(0, 1000, 0)
         self.fields["max_wafers_in_system"] = self._spin(0, 1000, 8)
-        self.fields["training_phase"] = self._spin(1, 2, 2)
         self.fields["stop_on_scrap"] = self._check(True)
 
         # 时间/腔室相关参数
@@ -84,7 +83,6 @@ class ConfigEditor(QWidget):
         layout.addRow("n_wafer_route1", self.fields["n_wafer_route1"])
         layout.addRow("n_wafer_route2", self.fields["n_wafer_route2"])
         layout.addRow("max_wafers_in_system", self.fields["max_wafers_in_system"])
-        layout.addRow("training_phase", self.fields["training_phase"])
         layout.addRow("stop_on_scrap", self.fields["stop_on_scrap"])
         layout.addRow("D_Residual_time", self.fields["D_Residual_time"])
         layout.addRow("P_Residual_time", self.fields["P_Residual_time"])

@@ -111,7 +111,9 @@ def _build_single_policy(
     raw_state_dict = torch.load(str(model_path), map_location=device, weights_only=True)
     load_error: Exception | None = None
 
-    for candidate in _iter_single_candidate_state_dicts(raw_state_dict):
+    candidates = _iter_single_candidate_state_dicts(raw_state_dict)
+
+    for idx, candidate in enumerate(candidates):
         try:
             hidden, n_layers = _infer_single_model_shape(candidate)
             policy_backbone = MaskedPolicyHead(
@@ -156,15 +158,14 @@ def _rollout_single_sequence(
     model_path: Path,
     max_steps: int,
     seed: int,
-    training_phase: int,
     robot_capacity: int,
     device_mode: str = "single",
+    exploration: str = "mode",
 ) -> tuple[list[dict[str, Any]], bool, dict[str, Any], dict[str, Any]]:
     device = torch.device("cpu")
     torch.manual_seed(seed)
     env = Env_PN_Single(
         seed=seed,
-        training_phase=training_phase,
         robot_capacity=robot_capacity,
         device_mode=device_mode,
         detailed_reward=True,
@@ -191,7 +192,8 @@ def _rollout_single_sequence(
                     batch_size=[1],
                 )
 
-                with set_exploration_type(ExplorationType.MODE):
+                explore_type = ExplorationType.MODE if exploration == "mode" else ExplorationType.RANDOM
+                with set_exploration_type(explore_type):
                     td_out = policy(td_model)
                 action_idx = int(td_out["action"].squeeze(0).item())
 
@@ -240,7 +242,6 @@ def _rollout_single_sequence(
         "single_robot_capacity": int(robot_capacity),
         "single_route_code": int(getattr(env.net, "single_route_code", 0)),
         "single_device_mode": str(device_mode),
-        "training_phase": int(training_phase),
     }
     return sequence, finished, replay_env_overrides, reward_report
 
@@ -249,7 +250,6 @@ def _rollout_single_sequence_with_retry(
     model_path: Path,
     max_steps: int,
     seed: int,
-    training_phase: int,
     robot_capacity: int,
     max_retries: int = 10,
     device_mode: str = "single",
@@ -266,9 +266,9 @@ def _rollout_single_sequence_with_retry(
             model_path=model_path,
             max_steps=max_steps,
             seed=attempt_seed,
-            training_phase=training_phase,
             robot_capacity=robot_capacity,
             device_mode=device_mode,
+            exploration="mode" if attempt == 0 else "random",
         )
         last_sequence = sequence
         last_overrides = replay_env_overrides
@@ -286,7 +286,6 @@ def rollout_and_export(
     max_steps: int,
     seed: int,
     out_name: str,
-    training_phase: int,
     force_overwrite_planb: bool,
     device_mode: str,
     robot_capacity: int,
@@ -299,7 +298,6 @@ def rollout_and_export(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
-            training_phase=training_phase,
             robot_capacity=robot_capacity,
             max_retries=single_retries,
             device_mode="single",
@@ -316,7 +314,6 @@ def rollout_and_export(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
-            training_phase=training_phase,
             robot_capacity=robot_capacity,
             max_retries=single_retries,
             device_mode="cascade",
@@ -366,7 +363,6 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=500, help="最大推理步数")
     parser.add_argument("--seed", type=int, default=0, help="随机种子")
     parser.add_argument("--out-name", type=str, default="concurrent_infer_seq", help="action_series 输出文件前缀")
-    parser.add_argument("--phase", type=int, default=2, help="环境训练阶段(1/2)")
     parser.add_argument(
         "--device",
         type=str,
@@ -403,7 +399,6 @@ def main() -> None:
         max_steps=args.max_steps,
         seed=args.seed,
         out_name=out_name,
-        training_phase=args.phase,
         force_overwrite_planb=args.force_overwrite_planb,
         device_mode=selected_device,
         robot_capacity=args.robot_capacity,

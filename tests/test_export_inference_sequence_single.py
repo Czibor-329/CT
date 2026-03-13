@@ -69,7 +69,6 @@ def test_single_rollout_uses_policy_tensordict_path(monkeypatch):
         model_path=Path("dummy.pt"),
         max_steps=3,
         seed=0,
-        training_phase=2,
         robot_capacity=1,
     )
 
@@ -105,7 +104,6 @@ def test_single_rollout_retries_until_finish(monkeypatch):
         model_path=Path("dummy.pt"),
         max_steps=10,
         seed=7,
-        training_phase=2,
         robot_capacity=1,
         max_retries=10,
     )

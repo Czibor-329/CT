@@ -198,7 +198,6 @@ def collect_rollout(env: Env_PN_Concurrent, policy_module: DualActionPolicyModul
 
 def train_concurrent(
     config: PPOTrainingConfig = None,
-    training_phase: int = 2,
     config_path: str = None,
     checkpoint_path: str = None,
 ):
@@ -207,9 +206,8 @@ def train_concurrent(
     
     Args:
         config: 训练配置（优先使用）
-        training_phase: 训练阶段
         config_path: 配置文件路径（如果config为None则从此加载）
-        checkpoint_path: checkpoint文件路径，用于继续训练或微调
+        checkpoint_path: checkpoint 文件路径，用于继续训练或微调
     
     Returns:
         log: 训练日志
@@ -224,14 +222,14 @@ def train_concurrent(
             config = PPOTrainingConfig()
             print("使用默认配置")
     
-    print(f"[Concurrent PPO Training - Phase {training_phase}]")
+    print("[Concurrent PPO Training]")
     print(config)
     
     torch.manual_seed(config.seed)
     device = config.device
     
     # 创建环境
-    env = Env_PN_Concurrent(training_phase=training_phase)
+    env = Env_PN_Concurrent()
     
     # 网络参数
     n_obs = env.observation_spec["observation"].shape[0]
@@ -281,7 +279,7 @@ def train_concurrent(
     backup_dir = os.path.join(saved_models_dir, f"concurrent_{timestamp}")
     os.makedirs(backup_dir, exist_ok=True)
     
-    model_prefix = f"CT_concurrent_phase{training_phase}"
+    model_prefix = "CT_concurrent"
     best_model_path = os.path.join(saved_models_dir, f"{model_prefix}_best.pt")
     best_reward = float('-inf')
     
@@ -423,8 +421,6 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, 
                        default=r"C:\Users\khand\OneDrive\code\dqn\CT\data\ppo_configs\concurrent_phase2_config.json",
                        help="训练配置文件路径")
-    parser.add_argument("--phase", type=int, default=2, 
-                       help="训练阶段 (1 or 2)")
     parser.add_argument("--checkpoint", type=str, default=None,
                        help="checkpoint模型路径，用于继续训练或微调")
     args = parser.parse_args()
@@ -438,8 +434,7 @@ if __name__ == "__main__":
         config = PPOTrainingConfig.load(config_path)
     
     train_concurrent(
-        config=config, 
-        training_phase=args.phase, 
+        config=config,
         config_path=config_path,
         checkpoint_path=args.checkpoint
     )
