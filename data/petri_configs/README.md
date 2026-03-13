@@ -19,8 +19,8 @@ data/petri_configs/
 
 ### 奖励参数
 - `time_coef`: 每秒时间成本，防止躺平（默认: 1.0）
-- `R_done`: 每片完工奖励（默认: 100）
-- `R_scrap`: 报废惩罚（默认: 100）
+- `done_event_reward`: 每片完工奖励（默认: 10）
+- `scrap_event_penalty`: 报废惩罚（默认: -500）
 
 ### 预警与安全裕量参数
 - `T_warn`: 预警阈值（秒）（默认: 10）
@@ -43,7 +43,7 @@ data/petri_configs/
 
 ### 停滞惩罚参数
 - `idle_timeout`: 停滞超时阈值（秒）（默认: 100）
-- `idle_penalty`: 停滞惩罚值（默认: 1000）
+- `idle_event_penalty`: 停滞惩罚值（默认: 10）
 
 ### 训练控制参数
 - `stop_on_scrap`: 报废时是否停止（默认: true）
@@ -78,7 +78,7 @@ from solutions.Continuous_model.pn import Petri
 # 创建配置
 config = PetriEnvConfig(
     n_wafer=6,
-    R_done=200
+    done_event_reward=200
 )
 
 # 使用配置创建环境
@@ -116,7 +116,7 @@ from data.petri_configs.env_config import PetriEnvConfig
 
 config = PetriEnvConfig(
     n_wafer=6,
-    R_done=200,
+    done_event_reward=200,
     time_coef=1.0
 )
 

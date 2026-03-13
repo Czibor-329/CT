@@ -18,7 +18,7 @@ def example_1_default_config():
     net = Petri()
     print(f"Training Phase: {net.training_phase}")
     print(f"N Wafer: {net.n_wafer}")
-    print(f"R_done: {net.R_done}")
+    print(f"done_event_reward: {net.done_event_reward}")
     print(f"Transport Penalty: {net.reward_config['transport_penalty']}")
 
 
@@ -31,8 +31,8 @@ def example_2_custom_config():
     # 创建自定义配置
     config = PetriEnvConfig(
         n_wafer=6,
-        R_done=200,
-        R_scrap=150,
+        done_event_reward=200,
+        scrap_event_penalty=150,
         time_coef=1.0,
         training_phase=1,
         stop_on_scrap=False  # 不在报废时停止
@@ -71,11 +71,11 @@ def example_4_save_config():
     # 创建配置
     config = PetriEnvConfig(
         n_wafer=8,
-        R_done=150,
+        done_event_reward=150,
         time_coef=0.8,
         training_phase=2,
         idle_timeout=150,
-        idle_penalty=2000
+        idle_event_penalty=2000
     )
     
     # 保存配置
@@ -164,7 +164,7 @@ def example_8_modify_existing_config():
     
     # 修改参数
     config.n_wafer = 8
-    config.R_done = 150
+    config.done_event_reward = 150
     config.idle_timeout = 200
     
     # 保存为新配置
@@ -174,7 +174,7 @@ def example_8_modify_existing_config():
     # 创建环境
     net = Petri(config=config)
     print(f"\nN Wafer: {net.n_wafer}")
-    print(f"R_done: {net.R_done}")
+    print(f"done_event_reward: {net.done_event_reward}")
 
 
 def example_9_parameter_sweep():

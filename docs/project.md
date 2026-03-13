@@ -191,7 +191,7 @@
 使用完整奖励配置进行训练（加工腔室超时 + 运输位超时）：
 
 **奖励组件说明：**
-- `R_scrap`：晶圆报废惩罚（超过 `proc_time + P_Residual_time` 后触发）
+- `scrap_event_penalty`：晶圆报废惩罚（超过 `proc_time + P_Residual_time` 后触发）
 - `overtime_penalty`：加工腔室超时惩罚（逐秒递增）
 - `transport_penalty`：运输位超时惩罚（超过 `D_Residual_time` 后逐秒递增）
 

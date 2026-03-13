@@ -94,13 +94,13 @@ obs = [
 | -------------- | ------------ | ------------------------------ | ---------- |
 | `proc_reward`  | 加工奖励     | 在加工时间内每秒 +r            | r=2        |
 | `safe_reward`  | 安全裕量奖励 | 距离报废还有充足时间时给予奖励 | b_safe=0.5 |
-| `finish_bonus` | 完工奖励     | 每片完工 +100 × n_wafer        | R_done=100 |
+| `finish_bonus` | 完工奖励     | 每片完工 +100 × n_wafer        | done_event_reward=100 |
 
 **惩罚：**
 
 | 组件                 | 含义             | 计算公式                                  | 系数         | 阶段    |
 | -------------------- | ---------------- | ----------------------------------------- | ------------ | ------- |
-| `scrap_penalty`      | 报废惩罚         | 晶圆超过 `proc_time + 20s` 报废           | R_scrap=-100 | 全部    |
+| `scrap_penalty`      | 报废惩罚         | 晶圆超过 `proc_time + 20s` 报废           | scrap_event_penalty=-100 | 全部    |
 | `penalty`            | 加工腔室超时惩罚 | 超过 `proc_time + 15s` 后逐秒惩罚         | Q2_p=0.2     | 全部    |
 | `transport_penalty`  | 运输位超时惩罚   | 运输位停留超过 `10s` 后逐秒惩罚           | Q1_p=0.2     | Phase 2 |
 | `congestion_penalty` | 堵塞预测惩罚     | 上游多个 wafer 即将同时完成但下游容量不足 | c_congest=50 | 全部    |
@@ -173,8 +173,8 @@ python -m solutions.PPO.run_ppo --checkpoint solutions/PPO/saved_models/CT_ppo_b
 | `n_wafer`         | 12   | 系统中晶圆数量                       |
 | `P_Residual_time` | 15   | 加工腔室报废裕量（秒），超过后报废   |
 | `D_Residual_time` | 10   | 运输位超时裕量（秒），超过后逐秒惩罚 |
-| `R_scrap`         | 100  | 报废惩罚值                           |
-| `R_done`          | 100  | 每片完工奖励                         |
+| `scrap_event_penalty`         | 100  | 报废惩罚值                           |
+| `done_event_reward`          | 100  | 每片完工奖励                         |
 | `time_coef`       | 0.5  | 时间成本系数（每秒）                 |
 | `c_congest`       | 50   | 堵塞预测惩罚系数                     |
 

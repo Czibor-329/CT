@@ -77,7 +77,7 @@ class ConfigEditor(QWidget):
 
         # 其他参数
         self.fields["idle_timeout"] = self._spin(0, 10000, 700)
-        self.fields["idle_penalty"] = self._spin(0, 100000, 1000)
+        self.fields["idle_event_penalty"] = self._spin(0, 100000, 1000)
 
         layout.addRow("n_wafer", self.fields["n_wafer"])
         layout.addRow("n_wafer_route1", self.fields["n_wafer_route1"])
@@ -90,13 +90,13 @@ class ConfigEditor(QWidget):
         layout.addRow("T_load", self.fields["T_load"])
         layout.addRow("T_pm1_to_pm2", self.fields["T_pm1_to_pm2"])
         layout.addRow("idle_timeout", self.fields["idle_timeout"])
-        layout.addRow("idle_penalty", self.fields["idle_penalty"])
+        layout.addRow("idle_event_penalty", self.fields["idle_event_penalty"])
 
     def _build_reward_form(self) -> None:
         layout = QFormLayout(self.reward_group)
 
-        self.fields["R_done"] = self._spin(-100000, 100000, 100)
-        self.fields["R_scrap"] = self._spin(-100000, 100000, 500)
+        self.fields["done_event_reward"] = self._spin(-100000, 100000, 100)
+        self.fields["scrap_event_penalty"] = self._spin(-100000, 100000, 500)
         self.fields["time_coef"] = self._spin(0, 100, 2)
         self.fields["c_congest"] = self._spin(0, 10000, 50)
         self.fields["release_penalty_coef"] = self._spin(0, 10000, 10)
@@ -105,8 +105,8 @@ class ConfigEditor(QWidget):
         self.fields["a_warn"] = self._double(0, 10, 0.0)
         self.fields["b_safe"] = self._double(0, 10, 0.5)
 
-        layout.addRow("R_done", self.fields["R_done"])
-        layout.addRow("R_scrap", self.fields["R_scrap"])
+        layout.addRow("done_event_reward", self.fields["done_event_reward"])
+        layout.addRow("scrap_event_penalty", self.fields["scrap_event_penalty"])
         layout.addRow("time_coef", self.fields["time_coef"])
         layout.addRow("c_congest", self.fields["c_congest"])
         layout.addRow("release_penalty_coef", self.fields["release_penalty_coef"])
@@ -141,6 +141,15 @@ class ConfigEditor(QWidget):
             return
 
         data = json.loads(path.read_text(encoding="utf-8"))
+        # 旧参数名迁移（兼容旧 JSON）
+        if "done_event_reward" not in data and "R_done" in data:
+            data["done_event_reward"] = data["R_done"]
+        if "finish_event_reward" not in data and "R_finish" in data:
+            data["finish_event_reward"] = data["R_finish"]
+        if "scrap_event_penalty" not in data and "R_scrap" in data:
+            data["scrap_event_penalty"] = data["R_scrap"]
+        if "idle_event_penalty" not in data and "idle_penalty" in data:
+            data["idle_event_penalty"] = data["idle_penalty"]
         for key, widget in self.fields.items():
             value = self._get_value(data, key)
             if value is None:

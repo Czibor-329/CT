@@ -22,7 +22,6 @@ from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.construct_single import build_single_device_net
 from solutions.Continuous_model.pn import Place
 
-MAX_TIME = 20000
 CHAMBER = 1
 DELIVERY_ROBOT = 2
 SOURCE = 3
@@ -33,50 +32,46 @@ class ClusterTool:
         assert config is not None, "config must be provided"
         self.config = config
 
+        self.MAX_TIME = config.MAX_TIME
         self.n_wafer = int(config.n_wafer)
-        self.R_done = int(getattr(config, "R_done", 800))
-        self.R_finish = int(getattr(config, "R_finish", 800))
-        self.R_scrap = int(getattr(config, "R_scrap", 1000))
-        self.T_warn = int(getattr(config, "T_warn", 5))
-        self.a_warn = float(getattr(config, "a_warn", 1.0))
-        self.T_safe = int(getattr(config, "T_safe", 10))
-        self.b_safe = float(getattr(config, "b_safe", 0.2))
-        self.P_Residual_time = int(getattr(config, "P_Residual_time", 15))
-        self.D_Residual_time = int(getattr(config, "D_Residual_time", 10))
-        self.T_transport = int(getattr(config, "T_transport", 5))
-        self.T_load = int(getattr(config, "T_load", 5))
-        self.idle_penalty = float(getattr(config, "idle_penalty", 500))
-        self.stop_on_scrap = bool(getattr(config, "stop_on_scrap", True))
-        self.release_penalty_coef = float(getattr(config, "release_penalty_coef", 5))
-        self.reward_config = dict(getattr(config, "reward_config", {}))
-        self.robot_capacity = 2 if int(getattr(config, "single_robot_capacity", 1)) == 2 else 1
+        self.device_mode = config.device_mode
         
-        # 奖励计算系数
-        self.processing_reward_coef = float(getattr(config, "processing_reward_coef", 3.0))
-        self.transport_overtime_coef = float(getattr(config, "transport_overtime_coef", 1.0))
-        self.time_coef = int(getattr(config, "time_coef", 1))
-        self.single_cleaning_enabled = bool(getattr(config, "single_cleaning_enabled", True))
-        self.single_cleaning_targets = set(getattr(config, "single_cleaning_targets", ["PM3", "PM4"]))
-        self.single_cleaning_trigger_wafers = max(1, int(getattr(config, "single_cleaning_trigger_wafers", 2)))
-        self.single_cleaning_duration = max(0, int(getattr(config, "single_cleaning_duration", 150)))
-        self.wait_durations = _normalize_wait_durations(
-            getattr(config, "single_wait_durations", [5, 10, 20, 50, 100])
-        )
-        self.single_device_mode = str(getattr(config, "single_device_mode", "single")).lower()
-        if self.single_device_mode not in {"single", "cascade"}:
-            self.single_device_mode = "single"
-        raw_route_code = int(getattr(config, "single_route_code", 0))
-        if self.single_device_mode == "cascade":
-            self.single_route_code = raw_route_code if raw_route_code in {1, 2, 3} else 1
-        else:
-            self.single_route_code = 1 if raw_route_code == 1 else 0
-        if self.single_device_mode == "cascade":
-            cascade_stage3 = ("PM1", "PM2", "PM3", "PM4") if self.single_route_code == 1 else ("PM1", "PM2")
-            if self.single_route_code == 3:
-                self._single_process_chambers = ("PM7", "PM8", *cascade_stage3, "LLD")
+        self.done_event_reward = int(config.done_event_reward)
+        self.finish_event_reward = int(config.finish_event_reward)
+        self.scrap_event_penalty = int(config.scrap_event_penalty)
+        self.idle_event_penalty = float(config.idle_event_penalty)
+        self.release_event_penalty = float(config.release_event_penalty)
+        
+        self.warn_coef_penalty = int(config.warn_coef_penalty)
+        self.processing_coef_reward = float(config.processing_coef_reward)
+        self.transport_overtime_coef_penalty = float(config.transport_overtime_coef_penalty)
+        self.time_coef_penalty = float(config.time_coef_penalty)
+        
+        self.P_Residual_time = int(config.P_Residual_time)
+        self.D_Residual_time = int(config.D_Residual_time)
+        self.T_transport = int(config.T_transport)
+        self.T_load = int(config.T_load)
+        
+        self.stop_on_scrap = bool(config.stop_on_scrap)
+        
+        self.reward_config = dict(config.reward_config)
+        self.robot_capacity = 2 if int(config.single_robot_capacity) == 2 else 1
+
+        self.cleaning_enabled = bool(config.cleaning_enabled)
+        self.cleaning_targets = set(config.cleaning_targets)
+        self.cleaning_trigger_wafers = config.cleaning_trigger_wafers
+        self.cleaning_duration = max(0, int(config.cleaning_duration))
+        self.wait_durations = _normalize_wait_durations(config.single_wait_durations)
+        
+        self.route_code = config.route_code
+
+        if self.device_mode == "cascade":
+            cascade_stage3 = ("PM1", "PM2", "PM3", "PM4") if self.route_code == 1 else ("PM1", "PM2")
+            if self.route_code == 3:
+                self.chambers = ("PM7", "PM8", *cascade_stage3, "LLD")
             else:
-                self._single_process_chambers = ("PM7", "PM8", *cascade_stage3, "LLD", "PM9", "PM10")
-            self._timeline_chambers = self._single_process_chambers + ("LLC",)
+                self.chambers = ("PM7", "PM8", *cascade_stage3, "LLD", "PM9", "PM10")
+            self._timeline_chambers = self.chambers + ("LLC",)
             self._u_targets = {
                 "LP": ["PM7", "PM8"],
                 "PM7": ["LLC"],
@@ -85,7 +80,7 @@ class ClusterTool:
                 "PM1": ["LLD"],
                 "PM2": ["LLD"],
             }
-            if self.single_route_code == 3:
+            if self.route_code == 3:
                 self._u_targets.update({"LLD": ["LP_done"]})
             else:
                 self._u_targets.update(
@@ -95,9 +90,9 @@ class ClusterTool:
                         "PM10": ["LP_done"],
                     }
                 )
-            if self.single_route_code == 1:
+            if self.route_code == 1:
                 self._u_targets.update({"PM3": ["LLD"], "PM4": ["LLD"]})
-            if self.single_route_code == 3:
+            if self.route_code == 3:
                 self._step_map = {
                     "PM7": 1,
                     "PM8": 1,
@@ -119,9 +114,9 @@ class ClusterTool:
                     "PM10": 5,
                     "LP_done": 6,
                 }
-            if self.single_route_code == 1:
+            if self.route_code == 1:
                 self._step_map.update({"PM3": 3, "PM4": 3})
-            if self.single_route_code == 3:
+            if self.route_code == 3:
                 self._release_station_aliases = {
                     "s1": ["PM7", "PM8"],
                     "s2": ["LLC"],
@@ -146,9 +141,10 @@ class ClusterTool:
                     "u_LLD": ["s5"],
                 }
             self._system_entry_places = {"PM7", "PM8"}
-        elif self.single_route_code == 1:
-            self._single_process_chambers = ("PM1", "PM3", "PM4", "PM6")
-            self._timeline_chambers = tuple(self._single_process_chambers)
+
+        if self.route_code == 1 and self.device_mode == "single":
+            self.chambers = ("PM1", "PM3", "PM4", "PM6")
+            self._timeline_chambers = tuple(self.chambers)
             self._u_targets = {
                 "LP": ["PM1"],
                 "PM1": ["PM3", "PM4"],
@@ -161,8 +157,8 @@ class ClusterTool:
             self._release_chain_by_u = {"u_LP": ["s1", "s2", "s3"]}
             self._system_entry_places = {"PM1"}
         else:
-            self._single_process_chambers = ("PM1", "PM3", "PM4")
-            self._timeline_chambers = tuple(self._single_process_chambers)
+            self.chambers = ("PM1", "PM3", "PM4")
+            self._timeline_chambers = tuple(self.chambers)
             self._u_targets = {
                 "LP": ["PM1"],
                 "PM1": ["PM3", "PM4"],
@@ -173,16 +169,15 @@ class ClusterTool:
             self._release_station_aliases = {"s1": ["PM1"], "s2": ["PM3", "PM4"]}
             self._release_chain_by_u = {"u_LP": ["s1", "s2"]}
             self._system_entry_places = {"PM1"}
-        self._ready_chambers: Tuple[str, ...] = tuple(self._single_process_chambers)
-        self.single_proc_time_rand_enabled = bool(getattr(config, "single_proc_time_rand_enabled", False))
-        self.single_proc_time_rand_min_scale = float(getattr(config, "single_proc_time_rand_min_scale", 1.0))
-        self.single_proc_time_rand_max_scale = float(getattr(config, "single_proc_time_rand_max_scale", 1.0))
-        self._single_proc_time_rand_scale_map_raw = dict(
-            getattr(config, "single_proc_time_rand_scale_map", {}) or {}
-        )
+
+        self._ready_chambers: Tuple[str, ...] = tuple(self.chambers)
+        self.single_proc_time_rand_enabled = bool(config.single_proc_time_rand_enabled)
+        self.single_proc_time_rand_min_scale = float(config.single_proc_time_rand_min_scale)
+        self.single_proc_time_rand_max_scale = float(config.single_proc_time_rand_max_scale)
+        self._single_proc_time_rand_scale_map_raw = dict(config.single_proc_time_rand_scale_map or {})
         self._sanitize_default_random_scales()
         self._single_proc_time_rand_scale_map = self._build_chamber_random_scale_map()
-        raw_process_time_map = dict(getattr(config, "single_process_time_map", {}) or {})
+        raw_process_time_map = dict(config.single_process_time_map or {})
         self._base_process_time_map = self._preprocess_process_time_map(raw_process_time_map)
         self._episode_process_time_map = dict(self._base_process_time_map)
 
@@ -191,8 +186,8 @@ class ClusterTool:
             ttime=max(1, self.T_transport),
             robot_capacity=self.robot_capacity,
             process_time_map=self._base_process_time_map,
-            route_code=self.single_route_code,
-            device_mode=self.single_device_mode,
+            route_code=self.route_code,
+            device_mode=self.device_mode,
         )
         self.pre: np.ndarray = info["pre"]
         self.pre_color: np.ndarray = info.get("pre_color", self.pre[:, :, None])
@@ -233,11 +228,11 @@ class ClusterTool:
         self._cascade_round_robin_next: Dict[str, str] = {}
         self._single_round_robin_pairs: Dict[str, Tuple[str, str]] = {}
         self._single_round_robin_next: Dict[str, str] = {}
-        if self.single_device_mode == "cascade":
+        if self.device_mode == "cascade":
             self._cascade_round_robin_pairs["LP"] = ("PM7", "PM8")
-            if self.single_route_code in {2, 3}:
+            if self.route_code in {2, 3}:
                 self._cascade_round_robin_pairs["LLC"] = ("PM1", "PM2")
-            if self.single_route_code == 2:
+            if self.route_code == 2:
                 self._cascade_round_robin_pairs["LLD"] = ("PM9", "PM10")
             self._cascade_round_robin_next = {
                 source: pair[0] for source, pair in self._cascade_round_robin_pairs.items()
@@ -254,7 +249,7 @@ class ClusterTool:
         self.no_release_penalty = False
         self._chamber_timeline: Dict[str, list] = {name: [] for name in self._timeline_chambers}
         self._chamber_active: Dict[str, Dict[int, int]] = {name: {} for name in self._timeline_chambers}
-        self._init_single_cleaning_state()
+        self._init_cleaning_state()
 
     def step(self, a1=None, detailed_reward: bool = False, wait_duration: Optional[int] = None):
         """
@@ -267,7 +262,7 @@ class ClusterTool:
 
         self._last_deadlock = False
         # ======超出最大运行时间直接判定为超时结束，避免“原地等待”导致的无效步骤======
-        if self.time >= MAX_TIME:
+        if self.time >= self.MAX_TIME:
             timeout_reward = {"total": -100.0, "timeout": True} if detailed_reward else -100.0
             DONE = True
             SCRAPE = True
@@ -322,10 +317,10 @@ class ClusterTool:
             if self._consecutive_wait_time >= self.idle_timeout and not self._idle_penalty_applied:
                 self._idle_penalty_applied = True
                 if detailed_reward:
-                    reward_result["idle_timeout_penalty"] = -float(self.idle_penalty)
-                    reward_result["total"] -= float(self.idle_penalty)
+                    reward_result["idle_timeout_penalty"] = -float(self.idle_event_penalty)
+                    reward_result["total"] -= float(self.idle_event_penalty)
                 else:
-                    reward_result -= float(self.idle_penalty)
+                    reward_result -= float(self.idle_event_penalty)
         else:
             self._consecutive_wait_time = 0
 
@@ -363,11 +358,11 @@ class ClusterTool:
             self.scrap_count += 1
             self.resident_violation_count += 1
             if detailed_reward:
-                reward_result["scrap_penalty"] -= float(self.R_scrap)
-                reward_result["total"] -= float(self.R_scrap)
+                reward_result["scrap_penalty"] -= float(self.scrap_event_penalty)
+                reward_result["total"] -= float(self.scrap_event_penalty)
                 reward_result["scrap_info"] = scrap_info
             else:
-                reward_result -= float(self.R_scrap)
+                reward_result -= float(self.scrap_event_penalty)
             if self.stop_on_scrap:
                 DONE = True
                 SCRAPE = True
@@ -376,10 +371,10 @@ class ClusterTool:
         # ===== 任务完成奖励 ======
         if finish:
             if detailed_reward:
-                reward_result["finish_bonus"] += float(self.R_finish)
-                reward_result["total"] += float(self.R_finish)
+                reward_result["finish_bonus"] += float(self.finish_event_reward)
+                reward_result["total"] += float(self.finish_event_reward)
             else:
-                reward_result += float(self.R_finish)
+                reward_result += float(self.finish_event_reward)
             SCRAPE = False
         return bool(finish), reward_result, SCRAPE
 
@@ -400,7 +395,7 @@ class ClusterTool:
         self._idle_penalty_applied = False
         self._consecutive_wait_time = 0
         self._next_machine_id = 1
-        if self.single_device_mode == "cascade":
+        if self.device_mode == "cascade":
             self._cascade_round_robin_next = {
                 source: pair[0] for source, pair in self._cascade_round_robin_pairs.items()
             }
@@ -411,7 +406,7 @@ class ClusterTool:
         self._last_deadlock = False
         self._chamber_timeline = {name: [] for name in self._timeline_chambers}
         self._chamber_active = {name: {} for name in self._timeline_chambers}
-        self._init_single_cleaning_state()
+        self._init_cleaning_state()
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self._update_marking_vector()
         return None, self.get_enable_t()
@@ -431,7 +426,7 @@ class ClusterTool:
 
         # 时间惩罚：每步按 dt 线性惩罚，鼓励更快完成
         if self.reward_config.get("time_cost", 1):
-            parts["time_cost"] = -float(dt * self.time_coef)
+            parts["time_cost"] = -float(dt * self.time_coef_penalty)
 
         # 加工奖励：每个加工位上每个晶圆根据加工进度给予奖励
         if self.reward_config.get("proc_reward", 1):
@@ -440,7 +435,7 @@ class ClusterTool:
                     continue
                 remain = max(0, p.processing_time - int(p.head().stay_time))
                 progress = min(dt, remain)
-                parts["proc_reward"] += self.processing_reward_coef * float(progress)
+                parts["proc_reward"] += self.processing_coef_reward * float(progress)
 
         # 与 pn.py 对齐：运输位(type=2, 单设备主要是 d_TM1)超过 D_Residual_time 后按超时秒数惩罚
         if self.reward_config.get("transport_penalty", 1):
@@ -451,16 +446,15 @@ class ClusterTool:
                     deadline = int(tok.enter_time) + int(self.D_Residual_time)
                     over_start = max(int(t1), deadline)
                     if int(t2) > over_start:
-                        parts["penalty"] -= float(int(t2) - over_start) * float(self.transport_overtime_coef)
+                        parts["penalty"] -= float(int(t2) - over_start) * float(self.transport_overtime_coef_penalty)
 
+        # 驻留警告惩罚
         for p in self.marks:
             if p.type != CHAMBER or len(p.tokens) == 0:
                 continue
             left = p.processing_time + self.P_Residual_time - p.head().stay_time
-            if self.reward_config.get("warn_penalty", 1) and left <= self.T_warn:
-                parts["warn_penalty"] -= float(self.a_warn)
-            if self.reward_config.get("safe_reward", 1) and left > self.T_safe:
-                parts["safe_reward"] += float(self.b_safe)
+            if self.reward_config.get("warn_penalty", 1) and left <= self.P_Residual_time:
+                parts["warn_penalty"] -= int(self.warn_coef_penalty) * dt
 
         total = sum(parts.values())
         if detailed:
@@ -495,7 +489,7 @@ class ClusterTool:
             if dst is not None:
                 setattr(tok, "_target_place", dst)
             tok.machine = int(self._next_robot_machine())
-            if self.single_device_mode == "cascade":
+            if self.device_mode == "cascade":
                 # 级联模式下用 machine 字段承载 TM 语义：
                 # 1=TM2（LP/PM7/PM8/LLD/PM9/PM10 侧），2=TM3（LLC/PM1-4 侧）
                 # 说明：u_LLD/u_PM9/u_PM10 属于返回外环，应落在 TM2 语义。
@@ -520,7 +514,7 @@ class ClusterTool:
             self._track_enter(tok, target)
             if target == "LP_done":
                 self.done_count += 1
-                self._per_wafer_reward += float(self.R_done)
+                self._per_wafer_reward += float(self.done_event_reward)
             elif target in self._chamber_timeline and wafer_id >= 0:
                 idx = len(self._chamber_timeline[target])
                 self._chamber_timeline[target].append((end_time, None, wafer_id))
@@ -545,12 +539,12 @@ class ClusterTool:
 
         # step 1: 若为双臂，预先锁定一些u_*变迁
         stage1_enabled: List[int] = []
-        d_tm = self._get_place("d_TM1") if ("d_TM1" in self.id2p_name and self.single_device_mode != "cascade") else None
+        d_tm = self._get_place("d_TM1") if ("d_TM1" in self.id2p_name and self.device_mode != "cascade") else None
         head_tok = d_tm.head() if (d_tm is not None and len(d_tm.tokens) > 0) else None
 
         # 机器手容量为2时，如果 d_TM1 队首有晶圆，则锁定后续 u_* 来源到该晶圆的 dst 层，直到该晶圆离开 d_TM1。
         locked_sources: set[str] = set()
-        if self.robot_capacity == 2 and self.single_device_mode != "cascade" and head_tok is not None:
+        if self.robot_capacity == 2 and self.device_mode != "cascade" and head_tok is not None:
             locked_sources = set(getattr(head_tok, "_dst_level_targets", ()))
 
         # step2: 遍历变迁，结构性使能
@@ -583,7 +577,7 @@ class ClusterTool:
                 continue
             if t_name.startswith("u_"):
                 src = t_name[2:]
-                if self.robot_capacity == 2 and self.single_device_mode != "cascade":
+                if self.robot_capacity == 2 and self.device_mode != "cascade":
                     # 双臂规则2（更新）：只要 d_TM1 队首有晶圆，就锁定后续 u_* 来源到该晶圆的 dst 层。
                     if d_tm is not None and len(d_tm.tokens) > 0 and locked_sources and src not in locked_sources:
                         continue
@@ -683,7 +677,7 @@ class ClusterTool:
         chamber_map: Dict[str, Tuple[float, float]] = {}
         default_low = float(self.single_proc_time_rand_min_scale)
         default_high = float(self.single_proc_time_rand_max_scale)
-        for chamber in self._single_process_chambers:
+        for chamber in self.chambers:
             raw = self._single_proc_time_rand_scale_map_raw.get(chamber, {})
             if not isinstance(raw, dict):
                 raw = {}
@@ -693,8 +687,8 @@ class ClusterTool:
         return chamber_map
 
     def _preprocess_process_time_map(self, process_time_map: Dict[str, int]) -> Dict[str, int]:
-        if self.single_device_mode == "cascade":
-            pm_stage3_default = 600 if self.single_route_code == 1 else 300
+        if self.device_mode == "cascade":
+            pm_stage3_default = 600 if self.route_code == 1 else 300
             defaults = {
                 "PM7": 70,
                 "PM8": 70,
@@ -702,15 +696,15 @@ class ClusterTool:
                 "PM2": pm_stage3_default,
                 "LLD": 70,
             }
-            if self.single_route_code != 3:
+            if self.route_code != 3:
                 defaults.update({"PM9": 200, "PM10": 200})
-            if self.single_route_code == 1:
+            if self.route_code == 1:
                 defaults.update({"PM3": pm_stage3_default, "PM4": pm_stage3_default})
         else:
             defaults = {"PM1": 100, "PM3": 300, "PM4": 300, "PM6": 300}
         return _preprocess_process_time_map(
             process_time_map=process_time_map,
-            chambers=self._single_process_chambers,
+            chambers=self.chambers,
             defaults=defaults,
         )
 
@@ -718,7 +712,7 @@ class ClusterTool:
         if not self.single_proc_time_rand_enabled:
             return dict(self._base_process_time_map)
         sampled: Dict[str, int] = {}
-        for chamber in self._single_process_chambers:
+        for chamber in self.chambers:
             low, high = self._single_proc_time_rand_scale_map[chamber]
             base_time = float(self._base_process_time_map[chamber])
             sampled_time = base_time * float(np.random.uniform(low, high))
@@ -764,14 +758,14 @@ class ClusterTool:
         return self.id2p_name.index(name)
 
     def _transport_for_u_source(self, source: str) -> str:
-        if self.single_device_mode != "cascade":
+        if self.device_mode != "cascade":
             return "d_TM1"
         if source in {"LLC", "PM1", "PM2", "PM3", "PM4", "PM5", "PM6"}:
             return "d_TM3"
         return "d_TM2"
 
     def _transport_for_t_target(self, target: str) -> str:
-        if self.single_device_mode != "cascade":
+        if self.device_mode != "cascade":
             return "d_TM1"
         if target in {"PM1", "PM2", "PM3", "PM4", "PM5", "PM6", "LLD"}:
             return "d_TM3"
@@ -789,7 +783,7 @@ class ClusterTool:
             for tok in p.tokens:
                 tok.stay_time += dt
 
-    def _init_single_cleaning_state(self) -> None:
+    def _init_cleaning_state(self) -> None:
         for p in self.marks:
             if not p.name.startswith("PM"):
                 continue
@@ -877,19 +871,19 @@ class ClusterTool:
         self._advance_cleaning_and_idle(safe_dt)
 
     def _on_processing_unload(self, source_name: str) -> None:
-        if not self.single_cleaning_enabled:
+        if not self.cleaning_enabled:
             return
-        if source_name not in self.single_cleaning_targets:
+        if source_name not in self.cleaning_targets:
             return
         source_place = self._get_place(source_name)
         source_place.processed_wafer_count = int(getattr(source_place, "processed_wafer_count", 0)) + 1
         source_place.last_proc_type = source_name
         if source_place.is_cleaning:
             return
-        if source_place.processed_wafer_count >= self.single_cleaning_trigger_wafers:
+        if source_place.processed_wafer_count >= self.cleaning_trigger_wafers:
             count = int(source_place.processed_wafer_count)
             source_place.is_cleaning = True
-            source_place.cleaning_remaining = int(self.single_cleaning_duration)
+            source_place.cleaning_remaining = int(self.cleaning_duration)
             source_place.cleaning_reason = "processed_wafers"
             source_place.processed_wafer_count = 0
             source_place.idle_time = 0
@@ -899,7 +893,7 @@ class ClusterTool:
                     "time": int(self.time),
                     "chamber": source_place.name,
                     "rule": "processed_wafers",
-                    "duration": int(self.single_cleaning_duration),
+                    "duration": int(self.cleaning_duration),
                     "trigger_count": int(count),
                 }
             )
@@ -924,17 +918,17 @@ class ClusterTool:
         仅检查目标腔室容量，运输位停留时间约束仍由 t_* 侧控制。
         """
         candidates = self._u_targets.get(source, [])
-        if self.single_device_mode == "cascade" and source in {"PM7", "PM8"}:
+        if self.device_mode == "cascade" and source in {"PM7", "PM8"}:
             # LLC 满时仍允许从 PM7/PM8 取片到 d_TM1，后续由 t_LLC 容量约束拦截放片时机。
             # 这与用户要求一致：LLC 有片时 u_PM7/u_PM8 仍应可使能。
             if "LLC" in candidates:
                 return "LLC"
-        if self.single_device_mode == "cascade" and source in {"PM1", "PM2", "PM3", "PM4"}:
+        if self.device_mode == "cascade" and source in {"PM1", "PM2", "PM3", "PM4"}:
             # LLD 满时仍允许从 PM1-4 先取片到 d_TM1，后续由 t_LLD 实际容量约束放行。
             # 需求：LLD 有晶圆时，u_PM1/u_PM2/u_PM3/u_PM4 仍应保持可使能。
             if "LLD" in candidates:
                 return "LLD"
-        if self.single_device_mode == "cascade" and source in self._cascade_round_robin_pairs and preferred_target is None:
+        if self.device_mode == "cascade" and source in self._cascade_round_robin_pairs and preferred_target is None:
             # 路线2并行腔体采用轮换分配；仅在真实发射时推进轮换指针，避免使能检查污染状态。
             rr_targets = list(self._cascade_round_robin_pairs[source])
             available_targets: List[str] = []
@@ -956,7 +950,7 @@ class ClusterTool:
                 return chosen_target
             if len(available_targets) == 1:
                 return available_targets[0]
-        if self.single_device_mode == "single" and source in self._single_round_robin_pairs and preferred_target is None:
+        if self.device_mode == "single" and source in self._single_round_robin_pairs and preferred_target is None:
             # single 模式并行目标采用轮换分配，避免持续偏置到候选列表中的第一个目标。
             rr_targets = list(self._single_round_robin_pairs[source])
             available_targets: List[str] = []
@@ -1089,7 +1083,7 @@ class ClusterTool:
         # 仅追责释放动作：u_LP（从 LP 释放）、u_LLC（从 LLC 释放）、u_LLD（从 LLD 释放）。
         # u_PM7、u_PM2 等从加工腔卸载的动作不追责。
         RELEASE_BLAME_WHITELIST = frozenset({"u_LP", "u_LLC"})
-        penalty_coeff = float(self.release_penalty_coef) * 100.0
+        penalty_coeff = self.release_event_penalty
         for i, log in enumerate(self.fire_log):
             t_name = log.get("t_name", "")
             wid = int(log.get("token_id", -1))

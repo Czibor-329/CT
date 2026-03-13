@@ -151,9 +151,9 @@ class Petri:
         # 将配置参数设置为实例属性
         self.n_wafer = config.n_wafer
         self.time_coef = config.time_coef
-        self.R_done = config.R_done
-        self.R_finish = getattr(config, 'R_finish', 800)  # 全部完工大奖励
-        self.R_scrap = config.R_scrap
+        self.done_event_reward = config.done_event_reward
+        self.finish_event_reward = config.finish_event_reward
+        self.scrap_event_penalty = config.scrap_event_penalty
         self.T_warn = config.T_warn
         self.a_warn = config.a_warn
         self.T_safe = config.T_safe
@@ -164,7 +164,7 @@ class Petri:
         self.release_penalty_coef = config.release_penalty_coef
         self.T_transport = config.T_transport
         self.T_load = config.T_load
-        self.idle_penalty = config.idle_penalty
+        self.idle_event_penalty = config.idle_event_penalty
         # idle_timeout 在 marks 就绪后设为 最大处理时间+30，见下方
         self.stop_on_scrap = config.stop_on_scrap
         self.reward_config = config.reward_config
@@ -984,7 +984,7 @@ class Petri:
             # 单片完工奖励与统计
             if t_name == "t_LP_done":
                 # 晶圆完成加工，给予单片完工奖励
-                self._per_wafer_reward += self.R_done
+                self._per_wafer_reward += self.done_event_reward
                 self.entered_wafer_count -= 1
                 self.done_count += 1
             
@@ -1594,11 +1594,11 @@ class Petri:
                     done = self.stop_on_scrap
                     if with_reward:
                         if detailed_reward:
-                            reward_result["scrap_penalty"] = -self.R_scrap
-                            reward_result["total"] -= self.R_scrap
+                            reward_result["scrap_penalty"] = -self.scrap_event_penalty
+                            reward_result["total"] -= self.scrap_event_penalty
                             reward_result["scrap_info"] = scrap_info
                             return done, reward_result, True
-                        return done, reward_result - self.R_scrap, True
+                        return done, reward_result - self.scrap_event_penalty, True
                     return done, True
 
                 # 2. Q-time 违规 - 警告，不停止，不计入 scrap_count (以免触发外部停止)
@@ -1610,11 +1610,11 @@ class Petri:
                     if with_reward:
                         if detailed_reward:
                             # 使用较小的惩罚或特定 Q-time 惩罚
-                            reward_result["qtime_penalty"] = -self.R_scrap # 或其他系数
-                            reward_result["total"] -= self.R_scrap
+                            reward_result["qtime_penalty"] = -self.scrap_event_penalty # 或其他系数
+                            reward_result["total"] -= self.scrap_event_penalty
                             reward_result["scrap_info"] = scrap_info # 记录详情
                         else:
-                             reward_result -= self.R_scrap
+                             reward_result -= self.scrap_event_penalty
                     # 不返回，继续执行
                     pass
             
@@ -1623,10 +1623,10 @@ class Petri:
                 self._idle_penalty_applied = True  # 只惩罚一次
                 if with_reward:
                     if detailed_reward:
-                        reward_result["idle_timeout_penalty"] = -self.idle_penalty
-                        reward_result["total"] -= self.idle_penalty
+                        reward_result["idle_timeout_penalty"] = -self.idle_event_penalty
+                        reward_result["total"] -= self.idle_event_penalty
                     else:
-                        reward_result -= self.idle_penalty
+                        reward_result -= self.idle_event_penalty
             
             if with_reward:
                 return False, reward_result, False
@@ -1670,10 +1670,10 @@ class Petri:
         if finish:
             if with_reward:
                 if detailed_reward:
-                    reward_result["finish_bonus"] = self.R_finish+15000
-                    reward_result["total"] += self.R_finish
+                    reward_result["finish_bonus"] = self.finish_event_reward+15000
+                    reward_result["total"] += self.finish_event_reward
                 else:
-                    reward_result += self.R_finish
+                    reward_result += self.finish_event_reward
         
         # fire 后也检查报废
         is_scrap, scrap_info = self._check_scrap(return_info=True)
@@ -1700,11 +1700,11 @@ class Petri:
                 done = self.stop_on_scrap
                 if with_reward:
                     if detailed_reward:
-                        reward_result["scrap_penalty"] = -self.R_scrap
-                        reward_result["total"] -= self.R_scrap
+                        reward_result["scrap_penalty"] = -self.scrap_event_penalty
+                        reward_result["total"] -= self.scrap_event_penalty
                         reward_result["scrap_info"] = scrap_info
                         return done, reward_result, True
-                    return done, reward_result - self.R_scrap, True
+                    return done, reward_result - self.scrap_event_penalty, True
                 return done, True
 
             # 2. Q-time 违规 - 警告，不停止
@@ -1715,11 +1715,11 @@ class Petri:
                 # 施加惩罚但不停止
                 if with_reward:
                     if detailed_reward:
-                        reward_result["qtime_penalty"] = -self.R_scrap
-                        reward_result["total"] -= self.R_scrap
+                        reward_result["qtime_penalty"] = -self.scrap_event_penalty
+                        reward_result["total"] -= self.scrap_event_penalty
                         reward_result["scrap_info"] = scrap_info
                     else:
-                         reward_result -= self.R_scrap
+                         reward_result -= self.scrap_event_penalty
                 # 不返回，继续执行
                 pass
 

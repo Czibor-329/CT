@@ -57,7 +57,7 @@ log, policy = train(env, eval_env, config=config)
 
 **主要参数:**
 - 环境参数: `n_wafer`
-- 奖励参数: `time_coef`, `R_done`, `R_scrap`
+- 奖励参数: `time_coef`, `done_event_reward`, `scrap_event_penalty`
 - 预警参数: `T_warn`, `a_warn`, `T_safe`, `b_safe`
 - 超时系数: `D_Residual_time`, `P_Residual_time`
 - 奖励开关: `reward_config`
@@ -226,8 +226,8 @@ for key in dict1:
 {
   "n_wafer": 4,
   "time_coef": 1.0,
-  "R_done": 200,
-  "R_scrap": 150,
+  "done_event_reward": 200,
+  "scrap_event_penalty": 150,
   "reward_config": {
     "proc_reward": 1,
     "safe_reward": 0,

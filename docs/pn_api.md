@@ -180,5 +180,5 @@ class BasedToken:
 
 **死锁终止语义（单设备）**
 - 发生死锁时，episode 终止，增加 `deadlock_count`。
-- 死锁惩罚量级与 `R_scrap` 等价（`deadlock_penalty = -abs(R_scrap)`）。
+- 死锁惩罚量级与 `scrap_event_penalty` 等价（`deadlock_penalty = -abs(scrap_event_penalty)`）。
 - 死锁不计入 `scrap`。

@@ -59,15 +59,13 @@ class PetriEnvConfig:
         >>> print(config)  # 简略模式
         >>> print(config.format(detailed=True))  # 详细模式
     """
-
+    MAX_TIME: int = 2000
     n_wafer: int = 12
-    R_done: int = 10
-    R_finish: int = 800
-    R_scrap: int = -500
-    T_warn: int = 30
-    a_warn: float = 0.1
-    T_safe: int = 60
-    b_safe: float = 0.05
+    done_event_reward: int = 10
+    finish_event_reward: int = 800
+    scrap_event_penalty: int = -500
+    warn_coef_penalty: int = 2
+
 
     c_congest: float = 1.0
     D_Residual_time: int = 10
@@ -76,35 +74,27 @@ class PetriEnvConfig:
     T_transport: int = 5
     T_load: int = 5
 
-    idle_penalty: int = 10
+    idle_event_penalty: int = 10
     stop_on_scrap: bool = True
     max_wafers_in_system: int = 7
     
     # 奖励计算系数
-    transport_overtime_coef: float = 1.0    # 运输超时惩罚系数 (原 Q1_p)
-    chamber_overtime_coef: float = 0.2      # 加工腔室超时惩罚系数 (原 Q2_p)
-    processing_reward_coef: float = 3.0     # 加工奖励系数 (原 r)
+    transport_overtime_coef_penalty: float = 1.0    # 运输超时惩罚系数 (原 Q1_p)
+    processing_coef_reward: float = 3.0     # 加工奖励系数 (原 r)
     in_system_time_penalty_coef: float = 0.0  # 系统内停留惩罚系数（温和，避免掩盖加工奖励）
-    time_coef : float = 1.0  # 时间成本系数
-    release_penalty_coef: float = 0.1 # 释放违规惩罚系数
+    time_coef_penalty : float = 1.0  # 时间成本系数
+    release_event_penalty: float = 0.1 # 释放违规惩罚系数
 
     reward_config: Optional[Dict[str, int]] = None
 
-    # 性能优化
-    optimize_reward_calc: bool = False
-    optimize_enable_check: bool = False
-    optimize_state_update: bool = False
-    cache_indices: bool = False
-    optimize_data_structures: bool = False
-    turbo_mode: bool = False
     single_robot_capacity: int = 1 # 单设备机械手容量（默认为1，训练简化版可设置为2或更高以加快训练）
     # 单设备模式：single=原单设备路径，cascade=级联路径模板
-    single_device_mode: str = "single"
+    device_mode: str = "single"
     # 单设备清洗配置（训练简化版）
-    single_cleaning_enabled: bool = True
-    single_cleaning_targets: List[str] = field(default_factory=lambda: ["PM3", "PM4"])
-    single_cleaning_trigger_wafers: int = 5
-    single_cleaning_duration: int = 150
+    cleaning_enabled: bool = True
+    cleaning_targets: List[str] = field(default_factory=lambda: ["PM3", "PM4"])
+    cleaning_trigger_wafers: int = 5
+    cleaning_duration: int = 150
     # 单设备工序时间配置（秒）
     single_process_time_map: Dict[str, int] = field(default_factory=_default_single_process_time_map)
     # 单设备路径代号（整数切换预置路径）
@@ -115,7 +105,7 @@ class PetriEnvConfig:
     #   1: PM7/PM8 -> LLC -> PM1/PM2/PM3/PM4 -> LLD -> PM9/PM10
     #   2: PM7/PM8 -> LLC -> PM1/PM2 -> LLD -> PM9/PM10
     #   3: PM7/PM8 -> LLC -> PM1/PM2 -> LLD -> LP_done
-    single_route_code: int = 1
+    route_code: int = 1
     # 单设备工序时间随机扰动（按 episode 固定）
     single_proc_time_rand_enabled: bool = False
     # 单设备工序时间随机扰动区间（按腔室独立配置）
@@ -182,7 +172,7 @@ class PetriEnvConfig:
             lines.append(f"  路线分配: route1={self.n_wafer_route1}, route2={self.n_wafer_route2}")
         lines.append(f"  单设备机械手容量: {self.single_robot_capacity}")
         lines.append(f"  单设备模式: {self.single_device_mode}")
-        lines.append(f"  单设备路径代号: {self.single_route_code}")
+        lines.append(f"  单设备路径代号: {self.route_code}")
         
         if self.end_place_name != "LP_done":
             lines.append(f"  终点库所: {self.end_place_name}")
@@ -231,9 +221,9 @@ class PetriEnvConfig:
         
         # 奖励参数
         lines.append("\n【奖励参数】")
-        lines.append(f"  R_done: {self.R_done}")
-        lines.append(f"  R_finish: {self.R_finish}")
-        lines.append(f"  R_scrap: {self.R_scrap}")
+        lines.append(f"  done_event_reward: {self.done_event_reward}")
+        lines.append(f"  finish_event_reward: {self.finish_event_reward}")
+        lines.append(f"  scrap_event_penalty: {self.scrap_event_penalty}")
         lines.append(f"  time_coef: {self.time_coef}")
         
         # 其他参数
@@ -316,6 +306,14 @@ class PetriEnvConfig:
             data["time_coef"] = data["c_time"]
         if "release_penalty_coef" not in data and "c_release_violation" in data:
             data["release_penalty_coef"] = data["c_release_violation"]
+        if "done_event_reward" not in data and "R_done" in data:
+            data["done_event_reward"] = data["R_done"]
+        if "finish_event_reward" not in data and "R_finish" in data:
+            data["finish_event_reward"] = data["R_finish"]
+        if "scrap_event_penalty" not in data and "R_scrap" in data:
+            data["scrap_event_penalty"] = data["R_scrap"]
+        if "idle_event_penalty" not in data and "idle_penalty" in data:
+            data["idle_event_penalty"] = data["idle_penalty"]
         # 列表/集合在 JSON 中为列表，需转换
         if "no_residence_place_names" in data and data["no_residence_place_names"] is not None:
             data["no_residence_place_names"] = set(data["no_residence_place_names"])
