@@ -77,10 +77,10 @@ class ClusterTool:
         self.cleaning_targets = set(config.cleaning_targets)
         self.cleaning_trigger_wafers = config.cleaning_trigger_wafers
         self.cleaning_duration = max(0, int(config.cleaning_duration))
-        self.wait_durations = _normalize_wait_durations(config.single_wait_durations)
+        self.wait_durations = _normalize_wait_durations(config.wait_durations)
         
-        self.device_mode = getattr(config, "single_device_mode", None) or config.device_mode
-        self.route_code = getattr(config, "single_route_code", None) or config.route_code
+        self.device_mode = config.device_mode
+        self.route_code = config.route_code
         self.single_device_mode = self.device_mode
         self.single_route_code = self.route_code
 
@@ -101,8 +101,8 @@ class ClusterTool:
         self._single_process_chambers = self.chambers
 
         self.proc_rand_enabled = bool(config.proc_rand_enabled)
-        self._proc_rand_scale_map = dict(config.single_proc_time_rand_scale_map or {})
-        raw = dict(config.single_process_time_map or {})
+        self._proc_rand_scale_map = dict(config.proc_time_rand_scale_map or {})
+        raw = dict(config.process_time_map or {})
         self._base_proc_time_map = self._preprocess_process_time_map(raw)
         self._episode_proc_time_map: Dict[str, int] = {}
 

@@ -61,29 +61,31 @@ class PetriEnvConfig:
     """
     MAX_TIME: int = 2000
     n_wafer: int = 12
+
+    # 奖励计算系数
     done_event_reward: int = 10
     finish_event_reward: int = 800
     scrap_event_penalty: int = -500
     warn_coef_penalty: int = 2
+    idle_event_penalty: int = 1000
 
+    transport_overtime_coef_penalty: float = 1.0  # 运输超时惩罚系数 (原 Q1_p)
+    processing_coef_reward: float = 3.0  # 加工奖励系数 (原 r)
+    in_system_time_penalty_coef: float = 0.0  # 系统内停留惩罚系数（温和，避免掩盖加工奖励）
+    time_coef_penalty: float = 1.0  # 时间成本系数
+    release_event_penalty: float = 0.1  # 释放违规惩罚系数
 
-    c_congest: float = 1.0
-    D_Residual_time: int = 10
+    # 常量
+    D_Residual_time: int = 20
     P_Residual_time: int = 15
-
     T_transport: int = 5
     T_load: int = 5
 
-    idle_event_penalty: int = 10
+
     stop_on_scrap: bool = True
     max_wafers_in_system: int = 7
     
-    # 奖励计算系数
-    transport_overtime_coef_penalty: float = 1.0    # 运输超时惩罚系数 (原 Q1_p)
-    processing_coef_reward: float = 3.0     # 加工奖励系数 (原 r)
-    in_system_time_penalty_coef: float = 0.0  # 系统内停留惩罚系数（温和，避免掩盖加工奖励）
-    time_coef_penalty : float = 1.0  # 时间成本系数
-    release_event_penalty: float = 0.1 # 释放违规惩罚系数
+
 
     reward_config: Optional[Dict[str, int]] = None
 
@@ -95,7 +97,7 @@ class PetriEnvConfig:
     cleaning_trigger_wafers: int = 5
     cleaning_duration: int = 150
     # 单设备工序时间配置（秒）
-    single_process_time_map: Dict[str, int] = field(default_factory=_default_single_process_time_map)
+    process_time_map: Dict[str, int] = field(default_factory=_default_single_process_time_map)
     # 单设备路径代号（整数切换预置路径）
     # single 模式:
     #   0: PM1 -> [PM3/PM4] -> LP_done
@@ -108,11 +110,11 @@ class PetriEnvConfig:
     # 单设备工序时间随机扰动（按 episode 固定）
     proc_rand_enabled: bool = False
     # 单设备工序时间随机扰动区间（按腔室独立配置）
-    single_proc_time_rand_scale_map: Dict[str, Dict[str, float]] = field(
+    proc_time_rand_scale_map: Dict[str, Dict[str, float]] = field(
         default_factory=_default_single_proc_time_rand_scale_map
     )
     # 单设备 WAIT 动作档位（秒）
-    single_wait_durations: List[int] = field(default_factory=_default_wait_durations)
+    wait_durations: List[int] = field(default_factory=_default_wait_durations)
 
     # 路线与晶圆分配（可选；无则用默认双路线）
     n_wafer_route1: Optional[int] = None
