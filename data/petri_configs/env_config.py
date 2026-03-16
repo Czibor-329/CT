@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 
+def _proc_rand_scale_to_min_max(scale: float) -> tuple:
+    """单值 proc_rand_scale 转 min/max，0.3 表示 [0.7, 1.3]。"""
+    scale = max(0.0, min(1.0, float(scale)))
+    return (1.0 - scale, 1.0 + scale)
+
+
 def _default_reward_config() -> Dict[str, int]:
     return {
         "proc_reward": 1,
@@ -116,6 +122,13 @@ class PetriEnvConfig:
     # 单设备 WAIT 动作档位（秒）
     wait_durations: List[int] = field(default_factory=_default_wait_durations)
 
+    # 腔室集成配置（可选）。若提供则覆盖/生成 process_time_map、清洁与随机映射
+    # 每腔室: process_time, cleaning_duration, cleaning_trigger_wafers, proc_rand_scale（0.3 表示 70%~130%）
+    chambers: Optional[Dict[str, Dict[str, Any]]] = None
+    # 由 chambers 或扁平字段归一化得到的 per-chamber 映射（__post_init__ 中填充）
+    cleaning_trigger_wafers_map: Optional[Dict[str, int]] = None
+    cleaning_duration_map: Optional[Dict[str, int]] = None
+
     # 路线与晶圆分配（可选；无则用默认双路线）
     n_wafer_route1: Optional[int] = None
     n_wafer_route2: Optional[int] = None
@@ -134,6 +147,46 @@ class PetriEnvConfig:
     def __post_init__(self) -> None:
         if self.reward_config is None:
             self.reward_config = _default_reward_config()
+        self._normalize_chamber_config()
+
+    def _normalize_chamber_config(self) -> None:
+        """从 chambers 或扁平字段归一化出 cleaning_trigger_wafers_map、cleaning_duration_map 等。"""
+        if self.chambers is not None:
+            pt_map = dict(self.process_time_map)
+            rand_map = dict(self.proc_time_rand_scale_map)
+            for name, spec in self.chambers.items():
+                if not isinstance(spec, dict):
+                    continue
+                pt = spec.get("process_time")
+                if pt is not None:
+                    pt_map[name] = int(pt)
+                scale = spec.get("proc_rand_scale")
+                if scale is not None:
+                    low, high = _proc_rand_scale_to_min_max(float(scale))
+                    rand_map[name] = {"min": low, "max": high}
+            self.process_time_map = pt_map
+            self.proc_time_rand_scale_map = rand_map
+            self.cleaning_trigger_wafers_map = {
+                name: max(0, int(spec.get("cleaning_trigger_wafers", 0)))
+                for name, spec in (self.chambers or {}).items()
+                if isinstance(spec, dict)
+            }
+            self.cleaning_duration_map = {
+                name: max(0, int(spec.get("cleaning_duration", 0)))
+                for name, spec in (self.chambers or {}).items()
+                if isinstance(spec, dict)
+            }
+            # chambers 模式下，清洗目标与 per-chamber 触发映射保持一致
+            self.cleaning_targets = sorted(
+                [name for name, trig in self.cleaning_trigger_wafers_map.items() if int(trig) > 0]
+            )
+        else:
+            self.cleaning_trigger_wafers_map = {
+                c: self.cleaning_trigger_wafers for c in self.cleaning_targets
+            }
+            self.cleaning_duration_map = {
+                c: self.cleaning_duration for c in self.cleaning_targets
+            }
 
     def format(self, detailed: bool = False) -> str:
         """
@@ -209,7 +262,6 @@ class PetriEnvConfig:
         
         # 其他参数
         lines.append("\n【其他参数】")
-        lines.append(f"  c_congest: {self.c_congest}")
         lines.append(f"  release_penalty_coef: {self.release_event_penalty}")
         
         # 路线配置

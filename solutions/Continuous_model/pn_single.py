@@ -24,6 +24,7 @@ from solutions.Continuous_model.construct_single import (
     parse_route,
 )
 from solutions.Continuous_model.pn import Place
+from solutions.Continuous_model.takt_cycle_analyzer import analyze_cycle
 
 CHAMBER = 1
 DELIVERY_ROBOT = 2
@@ -41,6 +42,7 @@ REASON_DESC: Dict[str, str] = {
     "target_cleaning": "目标腔室清洗中",
     "dwell_time_not_met": "运输位停留时间未满足",
     "has_ready_wafer_restrict_wait": "有待取晶圆，仅允许短等待",
+    "takt_release_limit": "节拍限制：距上次发片间隔未达当前周期节拍",
 }
 
 
@@ -77,6 +79,16 @@ class ClusterTool:
         self.cleaning_targets = set(config.cleaning_targets)
         self.cleaning_trigger_wafers = config.cleaning_trigger_wafers
         self.cleaning_duration = max(0, int(config.cleaning_duration))
+        self._cleaning_trigger_map: Dict[str, int] = dict(
+            config.cleaning_trigger_wafers_map
+        ) if getattr(config, "cleaning_trigger_wafers_map", None) else {
+            c: config.cleaning_trigger_wafers for c in config.cleaning_targets
+        }
+        self._cleaning_duration_map: Dict[str, int] = dict(
+            config.cleaning_duration_map
+        ) if getattr(config, "cleaning_duration_map", None) else {
+            c: max(0, int(config.cleaning_duration)) for c in config.cleaning_targets
+        }
         self.wait_durations = _normalize_wait_durations(config.wait_durations)
         
         self.device_mode = config.device_mode
@@ -90,6 +102,7 @@ class ClusterTool:
             ROUTE_SPECS[("single", 0)],
         )
         route_meta = parse_route(stages, BUFFER_NAMES)
+        self._route_stages: List[List[str]] = list(stages)  # 用于节拍分析器
         self.chambers = tuple(route_meta["chambers"])
         self._timeline_chambers = tuple(route_meta["timeline_chambers"])
         self._u_targets = dict(route_meta["u_targets"])
@@ -111,6 +124,8 @@ class ClusterTool:
             "D_Residual_time": self.D_Residual_time,
             "cleaning_duration": self.cleaning_duration,
             "cleaning_trigger_wafers": self.cleaning_trigger_wafers,
+            "cleaning_duration_map": self._cleaning_duration_map,
+            "cleaning_trigger_wafers_map": self._cleaning_trigger_map,
             "scrap_clip_threshold": 20.0,
         }
         info = build_single_device_net(
@@ -157,12 +172,14 @@ class ClusterTool:
         self._idle_penalty_applied = False
         self._consecutive_wait_time = 0
         self._next_machine_id = 1
-        self._cascade_round_robin_pairs: Dict[str, Tuple[str, str]] = {}
+        self._cascade_round_robin_pairs: Dict[str, Tuple[str, ...]] = {}
         self._cascade_round_robin_next: Dict[str, str] = {}
         self._single_round_robin_pairs: Dict[str, Tuple[str, str]] = {}
         self._single_round_robin_next: Dict[str, str] = {}
         if self.device_mode == "cascade":
             self._cascade_round_robin_pairs["LP"] = ("PM7", "PM8")
+            if self.route_code == 1:
+                self._cascade_round_robin_pairs["LLC"] = ("PM1", "PM2", "PM3", "PM4")
             if self.route_code in {2, 3}:
                 self._cascade_round_robin_pairs["LLC"] = ("PM1", "PM2")
             if self.route_code == 2:
@@ -182,6 +199,9 @@ class ClusterTool:
         self._chamber_timeline: Dict[str, list] = {name: [] for name in self._timeline_chambers}
         self._chamber_active: Dict[str, Dict[int, int]] = {name: {} for name in self._timeline_chambers}
         self._init_cleaning_state()
+        self._takt_result: Optional[Dict[str, Any]] = self._compute_takt_result()
+        self._last_u_LP_fire_time: int = 0
+        self._u_LP_release_count: int = 0
         self._training = True
 
     def train(self):
@@ -351,6 +371,9 @@ class ClusterTool:
         self._chamber_timeline = {name: [] for name in self._timeline_chambers}
         self._chamber_active = {name: {} for name in self._timeline_chambers}
         self._init_cleaning_state()
+        self._takt_result = self._compute_takt_result()
+        self._last_u_LP_fire_time = 0
+        self._u_LP_release_count = 0
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 30
         self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
         return None, self.get_enable_t()
@@ -505,6 +528,9 @@ class ClusterTool:
         pst_place_idx = int(pst_places[0])
         self.m[pre_place_idx] -= 1
         self.m[pst_place_idx] += 1
+        if t_name == "u_LP":
+            self._last_u_LP_fire_time = int(start_time)
+            self._u_LP_release_count += 1
         return {
             "t_name": t_name,
             "t1": int(start_time),
@@ -603,6 +629,17 @@ class ClusterTool:
                 if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
                     continue
             stage2_enabled.append(t)
+            # 节拍限制：u_LP 发片间隔不得小于当前周期节拍
+            if self._takt_result and t_name == "u_LP":
+                takt = self._takt_result
+                cycle_takts = takt["cycle_takts"]
+                cycle_len = takt["cycle_length"]
+                if self._u_LP_release_count >= 1:
+                    required = cycle_takts[self._u_LP_release_count % cycle_len]
+                    if isinstance(required, float):
+                        required = int(round(required))
+                    if (self.time - self._last_u_LP_fire_time) < required:
+                        stage2_enabled.pop()
         return stage2_enabled
 
     def get_enable_actions_with_reasons(
@@ -699,6 +736,19 @@ class ClusterTool:
                 if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
                     disabled.append({"action": t, "name": t_name, "reason": "dwell_time_not_met"})
                     continue
+
+            # 节拍限制：u_LP 发片间隔不得小于当前周期节拍
+            if self._takt_result and t_name == "u_LP":
+                takt = self._takt_result
+                cycle_takts = takt["cycle_takts"]
+                cycle_len = takt["cycle_length"]
+                if self._u_LP_release_count >= 1:
+                    required = cycle_takts[self._u_LP_release_count % cycle_len]
+                    if isinstance(required, float):
+                        required = int(round(required))
+                    if (self.time - self._last_u_LP_fire_time) < required:
+                        disabled.append({"action": t, "name": t_name, "reason": "takt_release_limit"})
+                        continue
 
             enabled.append(t)
 
@@ -802,6 +852,65 @@ class ClusterTool:
             defaults=defaults,
         )
 
+    # 节拍分析器内部会统一给每道工序 p 加运输时间常量（当前口径为 +20）
+    _TRANSPORT_TIME_FOR_TAKT: int = 20
+
+    def _build_takt_stage(self, stage_idx: int, stage_places: List[str]) -> Optional[Dict[str, Any]]:
+        """
+        将一层 route stage 归一化为 analyzer 输入。
+        - 并行 stage 的 p 取该层瓶颈（max）
+        - 清洗参数优先取该层中最可能形成慢节拍的腔室（max(p+d)）
+        """
+        valid_places = [
+            place
+            for place in stage_places
+            if int(self._episode_proc_time_map.get(place, 0) or 0) > 0
+        ]
+        if not valid_places:
+            return None
+        base_p = max(int(self._episode_proc_time_map[place]) for place in valid_places)
+        q: Optional[int] = None
+        d = 0
+        if self.cleaning_enabled:
+            cleaning_candidates: List[Tuple[int, int, int, str]] = []
+            for place in valid_places:
+                trigger = int(self._cleaning_trigger_map.get(place, 0))
+                if trigger <= 0:
+                    continue
+                duration = int(self._cleaning_duration_map.get(place, self.cleaning_duration))
+                score = int(self._episode_proc_time_map.get(place, 0)) + duration
+                cleaning_candidates.append((score, trigger, duration, place))
+            if cleaning_candidates:
+                _, q, d, _ = max(cleaning_candidates, key=lambda item: (item[0], item[3]))
+        return {
+            "name": f"s{stage_idx + 1}",
+            "p": int(base_p),
+            "m": len(valid_places),
+            "q": q,
+            "d": int(d),
+        }
+
+    def _compute_takt_result(self) -> Optional[Dict[str, Any]]:
+        """
+        根据当前加工配方（路线 + 工序时长 + 清洗参数）调用节拍分析器，
+        analyzer 内部会统一把每道工序处理时间按「工序时长 + 运输时间」计入节拍。
+        失败或无可分析工序时返回 None。
+        """
+        analyzer_stages: List[Dict[str, Any]] = []
+        for i, stage in enumerate(self._route_stages):
+            if not stage:
+                continue
+            stage_cfg = self._build_takt_stage(stage_idx=i, stage_places=list(stage))
+            if stage_cfg is None:
+                continue
+            analyzer_stages.append(stage_cfg)
+        if not analyzer_stages:
+            return None
+        try:
+            return analyze_cycle(analyzer_stages, max_parts=10000)
+        except Exception:
+            return None
+
     @staticmethod
     def _clone_marks(marks: List[Place]) -> List[Place]:
         cloned: List[Place] = []
@@ -879,7 +988,7 @@ class ClusterTool:
         计算当前时刻到下一个关键事件的时间差（秒）。
         关键事件至少覆盖：
         - 某加工完成（避免跨过关键取片决策点）
-        - 某运输位达到 T_transport（运输完成，避免跨过关键放片决策点）
+        - u_LP 到达节拍（下一次允许 u_LP 发片的时刻，用于截断长 wait 以便在节拍点重新决策）
         """
         deltas: List[int] = []
         for place in self.marks:
@@ -897,9 +1006,23 @@ class ClusterTool:
                 continue
             if int(place.type) not in (CHAMBER, 5):
                 continue
+            if place.name.startswith("d_"):
+                continue
             head = place.head()
             delta = int(place.processing_time) - int(getattr(head, "stay_time", 0))
             deltas.append(max(0, int(delta)))
+        # u_LP 节拍使能时刻：下一次允许 u_LP 发片的时刻也作为关键事件，截断长 wait
+        if self._takt_result and self._u_LP_release_count >= 1:
+            takt = self._takt_result
+            cycle_takts = takt["cycle_takts"]
+            cycle_len = takt["cycle_length"]
+            required = cycle_takts[self._u_LP_release_count % cycle_len]
+            if isinstance(required, float):
+                required = int(round(required))
+            next_takt_time = self._last_u_LP_fire_time + required
+            delta_takt = next_takt_time - self.time
+            if delta_takt > 0:
+                deltas.append(int(delta_takt))
         if not deltas:
             return None
         min_delta = int(min(deltas))
@@ -931,17 +1054,19 @@ class ClusterTool:
     def _on_processing_unload(self, source_name: str) -> None:
         if not self.cleaning_enabled:
             return
-        if source_name not in self.cleaning_targets:
+        trigger = self._cleaning_trigger_map.get(source_name, 0)
+        if trigger <= 0:
             return
         source_place = self._get_place(source_name)
         source_place.processed_wafer_count = int(getattr(source_place, "processed_wafer_count", 0)) + 1
         source_place.last_proc_type = source_name
         if source_place.is_cleaning:
             return
-        if source_place.processed_wafer_count >= self.cleaning_trigger_wafers:
+        if source_place.processed_wafer_count >= trigger:
             count = int(source_place.processed_wafer_count)
+            duration = self._cleaning_duration_map.get(source_name, self.cleaning_duration)
             source_place.is_cleaning = True
-            source_place.cleaning_remaining = int(self.cleaning_duration)
+            source_place.cleaning_remaining = int(duration)
             source_place.cleaning_reason = "processed_wafers"
             source_place.processed_wafer_count = 0
             source_place.idle_time = 0
@@ -951,7 +1076,7 @@ class ClusterTool:
                     "time": int(self.time),
                     "chamber": source_place.name,
                     "rule": "processed_wafers",
-                    "duration": int(self.cleaning_duration),
+                    "duration": int(duration),
                     "trigger_count": int(count),
                 }
             )
@@ -987,7 +1112,7 @@ class ClusterTool:
             if "LLD" in candidates:
                 return "LLD"
         if self.device_mode == "cascade" and source in self._cascade_round_robin_pairs and preferred_target is None:
-            # 路线2并行腔体采用轮换分配；仅在真实发射时推进轮换指针，避免使能检查污染状态。
+            # 级联并行目标采用轮换分配；仅在真实发射时推进轮换指针，避免使能检查污染状态。
             rr_targets = list(self._cascade_round_robin_pairs[source])
             available_targets: List[str] = []
             for target in rr_targets:
@@ -998,16 +1123,21 @@ class ClusterTool:
                     continue
                 if len(target_place.tokens) < target_place.capacity:
                     available_targets.append(target)
-            if len(available_targets) == 2:
-                next_target = self._cascade_round_robin_next.get(source, available_targets[0])
-                chosen_target = next_target if next_target in available_targets else available_targets[0]
-                if advance_round_robin:
-                    self._cascade_round_robin_next[source] = (
-                        available_targets[1] if chosen_target == available_targets[0] else available_targets[0]
-                    )
+            if available_targets:
+                next_target = self._cascade_round_robin_next.get(source, rr_targets[0])
+                start_idx = rr_targets.index(next_target) if next_target in rr_targets else 0
+                chosen_target = available_targets[0]
+                for offset in range(len(rr_targets)):
+                    candidate = rr_targets[(start_idx + offset) % len(rr_targets)]
+                    if candidate in available_targets:
+                        chosen_target = candidate
+                        break
+                if advance_round_robin and len(rr_targets) > 1:
+                    chosen_idx = rr_targets.index(chosen_target)
+                    self._cascade_round_robin_next[source] = rr_targets[
+                        (chosen_idx + 1) % len(rr_targets)
+                    ]
                 return chosen_target
-            if len(available_targets) == 1:
-                return available_targets[0]
         if self.device_mode == "single" and source in self._single_round_robin_pairs and preferred_target is None:
             # single 模式并行目标采用轮换分配，避免持续偏置到候选列表中的第一个目标。
             rr_targets = list(self._single_round_robin_pairs[source])
@@ -1118,13 +1248,14 @@ class ClusterTool:
 
         # 从 fire_log 提取清洁区间（腔室在清洁期间占位，wid=-999 表示清洁占位）
         def build_cleaning_intervals(chamber_name: str) -> List[tuple]:
-            if not getattr(self, "cleaning_enabled", False) or chamber_name not in getattr(self, "cleaning_targets", set()):
+            if not getattr(self, "cleaning_enabled", False) or int(self._cleaning_trigger_map.get(chamber_name, 0)) <= 0:
                 return []
+            default_dur = self._cleaning_duration_map.get(chamber_name, self.cleaning_duration)
             out: List[tuple] = []
             for ev in self.fire_log:
                 if ev.get("event_type") == "cleaning_start" and ev.get("chamber") == chamber_name:
                     t0 = int(ev.get("time", 0))
-                    dur = int(ev.get("duration", self.cleaning_duration))
+                    dur = int(ev.get("duration", default_dur))
                     out.append((t0, t0 + dur, -999))
             return out
 

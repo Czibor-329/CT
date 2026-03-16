@@ -165,8 +165,11 @@ class PetriSingleAdapter(AlgorithmAdapter):
         chambers: List[ChamberState] = []
         transports: List[ChamberState] = []
         release_schedule: Dict[str, list] = {}
-        trigger = int(getattr(self.net, "cleaning_trigger_wafers", 2))
-        targets = set(getattr(self.net, "cleaning_targets", {"PM3", "PM4"}))
+        trigger_map = getattr(self.net, "_cleaning_trigger_map", None)
+        if trigger_map is not None:
+            targets = {c for c, t in trigger_map.items() if int(t) > 0}
+        else:
+            targets = set(getattr(self.net, "cleaning_targets", {"PM3", "PM4"}))
         for idx, place in enumerate(self.net.marks):
             wafers = [
                 WaferState(
@@ -211,7 +214,12 @@ class PetriSingleAdapter(AlgorithmAdapter):
             if is_cleaning:
                 status = "cleaning"
             processed = int(getattr(place, "processed_wafer_count", 0))
-            countdown = max(0, trigger - processed) if place.name in targets else -1
+            if trigger_map is not None:
+                chamber_trigger = int(trigger_map.get(place.name, 0))
+                countdown = max(0, chamber_trigger - processed) if chamber_trigger > 0 else -1
+            else:
+                trigger = int(getattr(self.net, "cleaning_trigger_wafers", 2))
+                countdown = max(0, trigger - processed) if place.name in targets else -1
             chambers.append(
                 ChamberState(
                     name=display_name,

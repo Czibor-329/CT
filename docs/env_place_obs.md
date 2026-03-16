@@ -62,8 +62,7 @@
 - 关键归一化参数：
  - `P_Residual_time`
  - `D_Residual_time`
- - `cleaning_duration`（从 self.net 读取）
- - `cleaning_trigger_wafers`（从 self.net 读取）
+ - `cleaning_duration` / `cleaning_trigger_wafers`：按腔室从 self.net 的 PM 实例或 `_cleaning_duration_map` / `_cleaning_trigger_map` 读取（支持 per-chamber 配置）
  - `SCRAP_CLIP_THRESHOLD`
 - 单设备工序时间参数：
  - `single_process_time_map.PM1/PM3/PM4`（`route_code=0`）

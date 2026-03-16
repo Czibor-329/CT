@@ -1,0 +1,203 @@
+"""
+生产线节拍独特循环识别算法（独立模块）。
+
+当前口径：
+1) 快节拍 w = max_i((p_i + 20) / m_i)
+2) 单工序慢节拍按“p+d 回推 m-1 拍”迭代构造，并做 max(w, ...)
+3) 多工序合并时，若同位出现来自不同工序的慢节拍冲突，
+   取最大慢节拍所属工序，按同样回推规则重算当前拍
+"""
+
+from __future__ import annotations
+
+from math import gcd
+from typing import Any, Dict, List, Optional
+
+
+def _normalize_number(value: float) -> float | int:
+    """若是整数值则返回 int，否则返回 float。"""
+    if abs(value - round(value)) < 1e-9:
+        return int(round(value))
+    return float(value)
+
+
+def _lcm(a: int, b: int) -> int:
+    """最小公倍数。"""
+    return abs(a * b) // gcd(a, b)
+
+
+def _build_stage_takt_cycle(
+    stage: Dict[str, Any], fast_takt: float
+) -> Dict[str, Any]:
+    """
+    构造单工序节拍周期：
+    - q is None: 恒为 [fast_takt]，无慢节拍位
+    - q 有值: 周期长度 q*m+m，前 q*m 项为 fast_takt，后 m 项按回推公式生成
+    """
+    p = float(stage["p"])
+    m = int(stage["m"])
+    q_raw = stage.get("q")
+    d = float(stage.get("d", 0))
+    p_plus_d = p + d
+
+    if q_raw is None:
+        return {
+            "cycle": [float(fast_takt)],
+            "is_slow": [False],
+            "m": m,
+            "p_plus_d": p_plus_d,
+        }
+
+    q = int(q_raw)
+    if q <= 0:
+        raise ValueError("q 若提供，必须 > 0。")
+
+    fast_count = q * m
+    cycle = [float(fast_takt)] * fast_count
+    is_slow = [False] * fast_count
+
+    for _ in range(m):
+        lookback_sum = sum(cycle[-(m - 1) :]) if m > 1 else 0.0
+        slow_takt = max(float(fast_takt), float(p_plus_d - lookback_sum))
+        cycle.append(slow_takt)
+        is_slow.append(True)
+
+    return {
+        "cycle": cycle,
+        "is_slow": is_slow,
+        "m": m,
+        "p_plus_d": p_plus_d,
+    }
+
+
+def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[str, Any]:
+    """
+    计算产线节拍独特循环（工序周期叠加口径）。
+
+    参数:
+        stages: 每道工序配置列表，字段:
+            - name: 工序名（可选）
+            - p: 单件加工时间（>0）
+            - m: 并行机器数（>=1）
+            - q: 每台机器加工 q 件后维护（None 表示无维护）
+            - d: 每次维护耗时（无维护可为 0）
+        max_parts: 最大可接受循环长度；若 LCM 周期超限则抛异常
+
+    返回:
+        {
+            "fast_takt": ...,
+            "peak_slow_takts": [...],
+            "cycle_length": ...,
+            "cycle_takts": [...]
+        }
+    """
+    if not stages:
+        raise ValueError("stages 不能为空。")
+    if max_parts <= 1:
+        raise ValueError("max_parts 需要大于 1。")
+
+    normalized_stages: List[Dict[str, Any]] = []
+
+    for idx, stage in enumerate(stages):
+        if "p" not in stage or "m" not in stage:
+            raise ValueError(f"第 {idx} 道工序缺少必填字段 p/m。")
+        p = int(stage["p"]) + 20
+        m = int(stage["m"])
+        q_raw = stage.get("q")
+        q = None if q_raw is None else int(q_raw)
+        d = int(stage.get("d", 0))
+
+        if p <= 0:
+            raise ValueError(f"第 {idx} 道工序 p 必须 > 0。")
+        if m <= 0:
+            raise ValueError(f"第 {idx} 道工序 m 必须 >= 1。")
+        if q is not None and q <= 0:
+            raise ValueError(f"第 {idx} 道工序 q 若提供，必须 > 0。")
+        if d < 0:
+            raise ValueError(f"第 {idx} 道工序 d 不能为负。")
+
+        normalized_stages.append(
+            {
+                "name": stage.get("name", f"s{idx + 1}"),
+                "p": p,
+                "m": m,
+                "q": q,
+                "d": d,
+            }
+        )
+
+    fast_takt_raw = max(float(s["p"]) / float(s["m"]) for s in normalized_stages)
+    fast_takt = _normalize_number(fast_takt_raw)
+
+    stage_infos: List[Dict[str, Any]] = [
+        _build_stage_takt_cycle(stage, fast_takt_raw) for stage in normalized_stages
+    ]
+    stage_cycle_lens = [len(info["cycle"]) for info in stage_infos]
+
+    cycle_length = 1
+    for length in stage_cycle_lens:
+        cycle_length = _lcm(cycle_length, int(length))
+
+    if cycle_length > max_parts:
+        raise RuntimeError(
+            f"在 max_parts={max_parts} 内未找到循环（LCM 周期长度为 {cycle_length}）。"
+        )
+
+    # 从前往后合并：默认逐位取 max；出现慢节拍冲突时按冲突规则回推当前拍
+    cycle_takts_raw: List[float] = []
+    for k in range(cycle_length):
+        values_at_k: List[float] = []
+        slow_candidates: List[tuple[float, Dict[str, Any]]] = []
+
+        for info in stage_infos:
+            stage_cycle = info["cycle"]
+            pos = k % len(stage_cycle)
+            v = float(stage_cycle[pos])
+            values_at_k.append(v)
+            if bool(info["is_slow"][pos]):
+                slow_candidates.append((v, info))
+
+        current = max(values_at_k)
+        if len(slow_candidates) >= 2:
+            max_slow_value, owner = max(slow_candidates, key=lambda x: x[0])
+            m_owner = int(owner["m"])
+            lookback_sum = (
+                sum(cycle_takts_raw[-(m_owner - 1) :]) if m_owner > 1 else 0.0
+            )
+            current = max(
+                float(fast_takt_raw),
+                float(owner["p_plus_d"]) - float(lookback_sum),
+                float(max_slow_value),
+            )
+
+        cycle_takts_raw.append(current)
+
+    cycle_takts = [_normalize_number(v) for v in cycle_takts_raw]
+    peak_slow_takts = sorted(
+        {
+            _normalize_number(v)
+            for v in cycle_takts_raw
+            if (v - fast_takt_raw) > 1e-9
+        }
+    )
+
+    return {
+        "fast_takt": fast_takt,
+        "peak_slow_takts": peak_slow_takts,
+        "cycle_length": cycle_length,
+        "cycle_takts": cycle_takts,
+    }
+
+
+if __name__ == "__main__":
+    stages = [
+        {"name": "s1", "p": 100, "m": 1, "q": 4, "d": 200},
+        {"name": "s2", "p": 300, "m": 2, "q": 2, "d": 200},
+        {"name": "s3", "p": 200, "m": 1, "q": None, "d": 0},
+    ]
+
+    result = analyze_cycle(stages, max_parts=10000)
+    print("fast_takt =", result["fast_takt"])
+    print("peak_slow_takts =", result["peak_slow_takts"])
+    print("cycle_length =", result["cycle_length"])
+    print("cycle_takts =", result["cycle_takts"])
