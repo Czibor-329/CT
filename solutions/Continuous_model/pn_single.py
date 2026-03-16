@@ -839,15 +839,15 @@ class ClusterTool:
             defaults=defaults,
         )
 
-    # 节拍分析时每道工序有效加工时间 = 工序处理时间 + 运输时间（用于与真实流动一致）
+    # 节拍分析器内部会统一给每道工序 p 加运输时间常量（当前口径为 +20）
     _TRANSPORT_TIME_FOR_TAKT: int = 20
 
     def _compute_takt_result(self) -> Optional[Dict[str, Any]]:
         """
         根据当前加工配方（路线 + 工序时长 + 清洗参数）调用节拍分析器，
-        每道工序的处理时间按「工序时长 + 运输时间」计入节拍。失败或无可分析工序时返回 None。
+        analyzer 内部会统一把每道工序处理时间按「工序时长 + 运输时间」计入节拍。
+        失败或无可分析工序时返回 None。
         """
-        transport = int(getattr(self, "_TRANSPORT_TIME_FOR_TAKT", 20))
         analyzer_stages: List[Dict[str, Any]] = []
         for i, stage in enumerate(self._route_stages):
             if not stage:
@@ -855,12 +855,13 @@ class ClusterTool:
             base_p = int(self._episode_proc_time_map.get(stage[0], 0) or 0)
             if base_p <= 0:
                 continue
-            p = base_p + transport
             m = len(stage)
             any_cleaning = any(c in self.cleaning_targets for c in stage)
             q = self.cleaning_trigger_wafers if (any_cleaning and self.cleaning_enabled) else None
             d = int(self.cleaning_duration) if any_cleaning else 0
-            analyzer_stages.append({"name": f"s{i+1}", "p": p, "m": m, "q": q, "d": d})
+            analyzer_stages.append(
+                {"name": f"s{i+1}", "p": base_p, "m": m, "q": q, "d": d}
+            )
         if not analyzer_stages:
             return None
         try:

@@ -368,12 +368,15 @@ python -m solutions.Continuous_model.export_inference_sequence \
 ### How to use / Impact
 - 输入 `stages` 支持每道工序参数：`p`（单件加工时间）、`m`（并行机台数）、`q`（维护触发件数，`None` 表示无维护）、`d`（维护时长）。
 - 节拍构造规则（当前口径）：
-  1. 快节拍：`fast_takt = max_i(p[i] / m[i])`；
-  2. 工序慢节拍：`slow_i = (p[i] + d[i]) / m[i]`（仅当 `q[i]` 非空）；
-  3. 工序周期长度：`q[i] * m[i] + m[i]`；
-  4. 工序周期序列：前 `q[i]*m[i]` 个为 `fast_takt`，最后 `m[i]` 个为 `slow_i`；
-  5. 全线周期长度为各工序周期长度的最小公倍数（LCM），逐位取 `max` 得到 `cycle_takts`；
-  6. 峰值慢节拍集合为 `cycle_takts` 中严格大于 `fast_takt` 的去重升序值。
+  1. 运输时间统一口径：分析器内部先对每道工序做 `p[i] = p[i] + 20`；
+  2. 快节拍：`fast_takt = max_i(p[i] / m[i])`；
+  3. 有维护工序（`q[i]` 非空）有 `m[i]` 个慢节拍：先放 `q[i]*m[i]` 个快节拍，再从前往后迭代计算慢节拍：
+     `slow = max(fast_takt, (p[i]+d[i]) - sum(前 m[i]-1 个节拍))`；
+  4. 工序周期长度：`q[i] * m[i] + m[i]`（无维护工序保持快节拍基线）；
+  5. 全线周期长度为各工序周期长度的最小公倍数（LCM），按时间从前往后合并；
+  6. 若同位出现来自不同工序的慢节拍冲突，取最大慢节拍所属工序 `i'`，按
+     `current = max(fast_takt, (p[i']+d[i']) - sum(前 m[i']-1 个全线节拍))` 重算当前位；
+  7. 峰值慢节拍集合为 `cycle_takts` 中严格大于 `fast_takt` 的去重升序值。
 - `max_parts` 作为循环长度上限：若 LCM 周期长度大于 `max_parts`，函数抛出异常。
 - 口径说明：实现已从“事件仿真+状态签名重复”调整为“工序周期叠加+逐位 max”。
 - 示例运行：
@@ -381,8 +384,8 @@ python -m solutions.Continuous_model.export_inference_sequence \
 
 ### 单设备 u_LP 节拍发片限制（pn_single 集成）
 - **What**：单设备 `ClusterTool` 在初始化与每次 `reset` 时根据当前加工配方（路线、工序时长、清洗参数）调用 `analyze_cycle`，将得到的 `cycle_takts` 用于限制从 LP 的发片节奏。
-- **工序时长**：节拍分析时每道工序的有效加工时间 = 工序处理时间 + 运输时间（默认 20，由 `ClusterTool._TRANSPORT_TIME_FOR_TAKT` 控制），与真实流动一致。
+- **工序时长**：`_compute_takt_result()` 传入工序原始处理时间 `p`，运输时间常量 `20` 由 `takt_cycle_analyzer.analyze_cycle` 统一计入。
 - **规则**：仅当“距上次 u_LP 发射的时间”不小于当前周期内对应位置的节拍值时，才允许再次发射 u_LP；首片不受限。
 - **取位偏移**：当首片已发射后，第一次进入节拍限制时从循环第 2 个元素开始取值（即跳过第 1 个元素）。
-- **实现**：`_compute_takt_result()` 根据 `_route_stages`、`_episode_proc_time_map`、`cleaning_targets`/`cleaning_trigger_wafers`/`cleaning_duration` 构建分析用 stages（p 含运输时间）并调用 `takt_cycle_analyzer.analyze_cycle`；`get_enable_t` / `get_enable_actions_with_reasons` 在 u_LP 使能判断中增加节拍间隔检查；原因码 `takt_release_limit` 表示因节拍限制未使能。
+- **实现**：`_compute_takt_result()` 根据 `_route_stages`、`_episode_proc_time_map`、`cleaning_targets`/`cleaning_trigger_wafers`/`cleaning_duration` 构建分析用 stages（p 为原始工序时长）并调用 `takt_cycle_analyzer.analyze_cycle`；`get_enable_t` / `get_enable_actions_with_reasons` 在 u_LP 使能判断中增加节拍间隔检查；原因码 `takt_release_limit` 表示因节拍限制未使能。
 - **影响**：若节拍分析失败或无可分析工序（如全为缓冲站），`_takt_result` 为 None，不施加发片限制。

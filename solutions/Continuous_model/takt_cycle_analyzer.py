@@ -1,10 +1,11 @@
 """
 生产线节拍独特循环识别算法（独立模块）。
 
-当前实现口径：
-1) 先按工序构造“独立节拍周期”
-2) 再按 LCM 周期逐位取 max，得到整线节拍周期
-3) 慢节拍定义为 (p + d) / m（仅 q 不为 None 时生效）
+当前口径：
+1) 快节拍 w = max_i((p_i + 20) / m_i)
+2) 单工序慢节拍按“p+d 回推 m-1 拍”迭代构造，并做 max(w, ...)
+3) 多工序合并时，若同位出现来自不同工序的慢节拍冲突，
+   取最大慢节拍所属工序，按同样回推规则重算当前拍
 """
 
 from __future__ import annotations
@@ -25,27 +26,48 @@ def _lcm(a: int, b: int) -> int:
     return abs(a * b) // gcd(a, b)
 
 
-def _build_stage_takt_cycle(stage: Dict[str, Any], fast_takt: float) -> List[float]:
+def _build_stage_takt_cycle(
+    stage: Dict[str, Any], fast_takt: float
+) -> Dict[str, Any]:
     """
     构造单工序节拍周期：
-    - q is None: 恒为 [fast_takt]
-    - q 有值: 周期长度 q*m+m，前 q*m 项为 fast_takt，后 m 项为 slow_takt=(p+d)/m
+    - q is None: 恒为 [fast_takt]，无慢节拍位
+    - q 有值: 周期长度 q*m+m，前 q*m 项为 fast_takt，后 m 项按回推公式生成
     """
     p = float(stage["p"])
     m = int(stage["m"])
     q_raw = stage.get("q")
     d = float(stage.get("d", 0))
+    p_plus_d = p + d
 
     if q_raw is None:
-        return [float(fast_takt)]
+        return {
+            "cycle": [float(fast_takt)],
+            "is_slow": [False],
+            "m": m,
+            "p_plus_d": p_plus_d,
+        }
 
     q = int(q_raw)
     if q <= 0:
         raise ValueError("q 若提供，必须 > 0。")
 
-    slow_takt = (p + d) / m
     fast_count = q * m
-    return [float(fast_takt)] * fast_count + [float(slow_takt)] * m
+    cycle = [float(fast_takt)] * fast_count
+    is_slow = [False] * fast_count
+
+    for _ in range(m):
+        lookback_sum = sum(cycle[-(m - 1) :]) if m > 1 else 0.0
+        slow_takt = max(float(fast_takt), float(p_plus_d - lookback_sum))
+        cycle.append(slow_takt)
+        is_slow.append(True)
+
+    return {
+        "cycle": cycle,
+        "is_slow": is_slow,
+        "m": m,
+        "p_plus_d": p_plus_d,
+    }
 
 
 def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[str, Any]:
@@ -74,15 +96,12 @@ def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[
     if max_parts <= 1:
         raise ValueError("max_parts 需要大于 1。")
 
-    p_list: List[int] = []
-    m_list: List[int] = []
-    q_list: List[Optional[int]] = []
-    d_list: List[int] = []
+    normalized_stages: List[Dict[str, Any]] = []
 
     for idx, stage in enumerate(stages):
         if "p" not in stage or "m" not in stage:
             raise ValueError(f"第 {idx} 道工序缺少必填字段 p/m。")
-        p = int(stage["p"])
+        p = int(stage["p"]) + 20
         m = int(stage["m"])
         q_raw = stage.get("q")
         q = None if q_raw is None else int(q_raw)
@@ -97,18 +116,23 @@ def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[
         if d < 0:
             raise ValueError(f"第 {idx} 道工序 d 不能为负。")
 
-        p_list.append(p)
-        m_list.append(m)
-        q_list.append(q)
-        d_list.append(d)
+        normalized_stages.append(
+            {
+                "name": stage.get("name", f"s{idx + 1}"),
+                "p": p,
+                "m": m,
+                "q": q,
+                "d": d,
+            }
+        )
 
-    fast_takt_raw = max(p / m for p, m in zip(p_list, m_list))
+    fast_takt_raw = max(float(s["p"]) / float(s["m"]) for s in normalized_stages)
     fast_takt = _normalize_number(fast_takt_raw)
 
-    stage_cycles: List[List[float]] = [
-        _build_stage_takt_cycle(stage, fast_takt_raw) for stage in stages
+    stage_infos: List[Dict[str, Any]] = [
+        _build_stage_takt_cycle(stage, fast_takt_raw) for stage in normalized_stages
     ]
-    stage_cycle_lens = [len(c) for c in stage_cycles]
+    stage_cycle_lens = [len(info["cycle"]) for info in stage_infos]
 
     cycle_length = 1
     for length in stage_cycle_lens:
@@ -119,11 +143,34 @@ def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[
             f"在 max_parts={max_parts} 内未找到循环（LCM 周期长度为 {cycle_length}）。"
         )
 
-    # 逐位叠加，整线节拍取各工序同位最大值
+    # 从前往后合并：默认逐位取 max；出现慢节拍冲突时按冲突规则回推当前拍
     cycle_takts_raw: List[float] = []
     for k in range(cycle_length):
-        v = max(stage_cycle[k % len(stage_cycle)] for stage_cycle in stage_cycles)
-        cycle_takts_raw.append(v)
+        values_at_k: List[float] = []
+        slow_candidates: List[tuple[float, Dict[str, Any]]] = []
+
+        for info in stage_infos:
+            stage_cycle = info["cycle"]
+            pos = k % len(stage_cycle)
+            v = float(stage_cycle[pos])
+            values_at_k.append(v)
+            if bool(info["is_slow"][pos]):
+                slow_candidates.append((v, info))
+
+        current = max(values_at_k)
+        if len(slow_candidates) >= 2:
+            max_slow_value, owner = max(slow_candidates, key=lambda x: x[0])
+            m_owner = int(owner["m"])
+            lookback_sum = (
+                sum(cycle_takts_raw[-(m_owner - 1) :]) if m_owner > 1 else 0.0
+            )
+            current = max(
+                float(fast_takt_raw),
+                float(owner["p_plus_d"]) - float(lookback_sum),
+                float(max_slow_value),
+            )
+
+        cycle_takts_raw.append(current)
 
     cycle_takts = [_normalize_number(v) for v in cycle_takts_raw]
     peak_slow_takts = sorted(
@@ -144,7 +191,7 @@ def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[
 
 if __name__ == "__main__":
     stages = [
-        {"name": "s1", "p": 100, "m": 1, "q": None, "d": 200},
+        {"name": "s1", "p": 100, "m": 1, "q": 4, "d": 200},
         {"name": "s2", "p": 300, "m": 2, "q": 2, "d": 200},
         {"name": "s3", "p": 200, "m": 1, "q": None, "d": 0},
     ]
