@@ -387,5 +387,5 @@ python -m solutions.Continuous_model.export_inference_sequence \
 - **工序时长**：`_compute_takt_result()` 传入工序原始处理时间 `p`，运输时间常量 `20` 由 `takt_cycle_analyzer.analyze_cycle` 统一计入。
 - **规则**：仅当“距上次 u_LP 发射的时间”不小于当前周期内对应位置的节拍值时，才允许再次发射 u_LP；首片不受限。
 - **取位偏移**：当首片已发射后，第一次进入节拍限制时从循环第 2 个元素开始取值（即跳过第 1 个元素）。
-- **实现**：`_compute_takt_result()` 根据 `_route_stages`、`_episode_proc_time_map`、`cleaning_targets`/`cleaning_trigger_wafers`/`cleaning_duration` 构建分析用 stages（p 为原始工序时长）并调用 `takt_cycle_analyzer.analyze_cycle`；`get_enable_t` / `get_enable_actions_with_reasons` 在 u_LP 使能判断中增加节拍间隔检查；原因码 `takt_release_limit` 表示因节拍限制未使能。
+- **实现**：`_compute_takt_result()` 根据 `_route_stages`、`_episode_proc_time_map`、`cleaning_targets` 与 per-chamber 的 `_cleaning_trigger_map`/`_cleaning_duration_map` 构建分析用 stages（p 为原始工序时长），每 stage 取该 stage 内第一个参与清洁的腔室的 q、d，并调用 `takt_cycle_analyzer.analyze_cycle`；`get_enable_t` / `get_enable_actions_with_reasons` 在 u_LP 使能判断中增加节拍间隔检查；原因码 `takt_release_limit` 表示因节拍限制未使能。腔室级清洁与工序参数可由配置中的 `chambers` 集成块提供（见 pn_api.md）。
 - **影响**：若节拍分析失败或无可分析工序（如全为缓冲站），`_takt_result` 为 None，不施加发片限制。

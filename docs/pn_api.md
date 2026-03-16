@@ -113,11 +113,10 @@ class BasedToken:
 - 通过 `PetriEnvConfig.single_robot_capacity` 控制 `d_TM1` 容量：
   - `1`：Single Arm（单臂）
   - `2`：Dual Arm（双臂）
-- 单设备清洗配置（当前训练简化版）：ClusterTool 属性名为 `cleaning_*`，配置文件 single.json 中对应 `cleaning_*`
-  - `cleaning_enabled=true`
-  - `cleaning_targets=["PM1","PM3","PM4","PM6"]`（可配置）
-  - `cleaning_trigger_wafers=5`（可配置，默认 5）
-  - `cleaning_duration=150`
+- 单设备清洗与腔室配置：支持全局扁平字段或腔室集成块 `chambers`。
+  - **扁平方式**：`cleaning_enabled`、`cleaning_targets`、`cleaning_trigger_wafers`、`cleaning_duration`；所有在 `cleaning_targets` 内的腔室共用同一触发次数与清洁时长。
+  - **腔室集成方式**：在配置中提供 `chambers`，每腔室可配置 `process_time`、`cleaning_duration`、`cleaning_trigger_wafers`、`proc_rand_scale`。`proc_rand_scale` 为单值，如 `0.3` 表示工序时间随机范围为 70%~130%（即 `[1-0.3, 1+0.3]`）。若提供 `chambers`，会生成/覆盖 `process_time_map`、`cleaning_trigger_wafers_map`、`cleaning_duration_map`、`proc_time_rand_scale_map`。
+  - ClusterTool 内部使用 `_cleaning_trigger_map`、`_cleaning_duration_map`（per-chamber）；构网时通过 `obs_config` 将上述 map 传给 `build_single_device_net`，每个 PM 实例获得对应腔室的清洁参数。
 
 **工艺路线**
 - `single_device_mode="cascade"`：

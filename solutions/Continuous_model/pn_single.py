@@ -79,6 +79,16 @@ class ClusterTool:
         self.cleaning_targets = set(config.cleaning_targets)
         self.cleaning_trigger_wafers = config.cleaning_trigger_wafers
         self.cleaning_duration = max(0, int(config.cleaning_duration))
+        self._cleaning_trigger_map: Dict[str, int] = dict(
+            config.cleaning_trigger_wafers_map
+        ) if getattr(config, "cleaning_trigger_wafers_map", None) else {
+            c: config.cleaning_trigger_wafers for c in config.cleaning_targets
+        }
+        self._cleaning_duration_map: Dict[str, int] = dict(
+            config.cleaning_duration_map
+        ) if getattr(config, "cleaning_duration_map", None) else {
+            c: max(0, int(config.cleaning_duration)) for c in config.cleaning_targets
+        }
         self.wait_durations = _normalize_wait_durations(config.wait_durations)
         
         self.device_mode = config.device_mode
@@ -114,6 +124,8 @@ class ClusterTool:
             "D_Residual_time": self.D_Residual_time,
             "cleaning_duration": self.cleaning_duration,
             "cleaning_trigger_wafers": self.cleaning_trigger_wafers,
+            "cleaning_duration_map": self._cleaning_duration_map,
+            "cleaning_trigger_wafers_map": self._cleaning_trigger_map,
             "scrap_clip_threshold": 20.0,
         }
         info = build_single_device_net(
@@ -856,9 +868,14 @@ class ClusterTool:
             if base_p <= 0:
                 continue
             m = len(stage)
-            any_cleaning = any(c in self.cleaning_targets for c in stage)
-            q = self.cleaning_trigger_wafers if (any_cleaning and self.cleaning_enabled) else None
-            d = int(self.cleaning_duration) if any_cleaning else 0
+            q: Optional[int] = None
+            d = 0
+            if self.cleaning_enabled:
+                for c in stage:
+                    if self._cleaning_trigger_map.get(c, 0) > 0:
+                        q = self._cleaning_trigger_map[c]
+                        d = int(self._cleaning_duration_map.get(c, self.cleaning_duration))
+                        break
             analyzer_stages.append(
                 {"name": f"s{i+1}", "p": base_p, "m": m, "q": q, "d": d}
             )
@@ -1002,17 +1019,19 @@ class ClusterTool:
     def _on_processing_unload(self, source_name: str) -> None:
         if not self.cleaning_enabled:
             return
-        if source_name not in self.cleaning_targets:
+        trigger = self._cleaning_trigger_map.get(source_name, 0)
+        if trigger <= 0:
             return
         source_place = self._get_place(source_name)
         source_place.processed_wafer_count = int(getattr(source_place, "processed_wafer_count", 0)) + 1
         source_place.last_proc_type = source_name
         if source_place.is_cleaning:
             return
-        if source_place.processed_wafer_count >= self.cleaning_trigger_wafers:
+        if source_place.processed_wafer_count >= trigger:
             count = int(source_place.processed_wafer_count)
+            duration = self._cleaning_duration_map.get(source_name, self.cleaning_duration)
             source_place.is_cleaning = True
-            source_place.cleaning_remaining = int(self.cleaning_duration)
+            source_place.cleaning_remaining = int(duration)
             source_place.cleaning_reason = "processed_wafers"
             source_place.processed_wafer_count = 0
             source_place.idle_time = 0
@@ -1022,7 +1041,7 @@ class ClusterTool:
                     "time": int(self.time),
                     "chamber": source_place.name,
                     "rule": "processed_wafers",
-                    "duration": int(self.cleaning_duration),
+                    "duration": int(duration),
                     "trigger_count": int(count),
                 }
             )
@@ -1189,13 +1208,14 @@ class ClusterTool:
 
         # 从 fire_log 提取清洁区间（腔室在清洁期间占位，wid=-999 表示清洁占位）
         def build_cleaning_intervals(chamber_name: str) -> List[tuple]:
-            if not getattr(self, "cleaning_enabled", False) or chamber_name not in getattr(self, "cleaning_targets", set()):
+            if not getattr(self, "cleaning_enabled", False) or int(self._cleaning_trigger_map.get(chamber_name, 0)) <= 0:
                 return []
+            default_dur = self._cleaning_duration_map.get(chamber_name, self.cleaning_duration)
             out: List[tuple] = []
             for ev in self.fire_log:
                 if ev.get("event_type") == "cleaning_start" and ev.get("chamber") == chamber_name:
                     t0 = int(ev.get("time", 0))
-                    dur = int(ev.get("duration", self.cleaning_duration))
+                    dur = int(ev.get("duration", default_dur))
                     out.append((t0, t0 + dur, -999))
             return out
 

@@ -373,8 +373,10 @@ def build_single_device_net(
     ctx = obs_config or {}
     p_res = int(ctx.get("P_Residual_time", 15))
     d_res = int(ctx.get("D_Residual_time", 10))
-    clean_dur = int(ctx.get("cleaning_duration", 150))
-    clean_trig = int(ctx.get("cleaning_trigger_wafers", 5))
+    clean_dur_default = int(ctx.get("cleaning_duration", 150))
+    clean_trig_default = int(ctx.get("cleaning_trigger_wafers", 5))
+    cleaning_duration_map: Dict[str, int] = dict(ctx.get("cleaning_duration_map") or {})
+    cleaning_trigger_wafers_map: Dict[str, int] = dict(ctx.get("cleaning_trigger_wafers_map") or {})
     scrap_clip = float(ctx.get("scrap_clip_threshold", 20.0))
 
     marks: List[Place] = []
@@ -427,14 +429,16 @@ def build_single_device_net(
             elif name in {"LLC", "LLD"}:
                 place = LL(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
             elif ptype == 1:
+                c_dur = int(cleaning_duration_map.get(name, clean_dur_default))
+                c_trig = int(cleaning_trigger_wafers_map.get(name, clean_trig_default))
                 place = PM(
                     name=name,
                     capacity=spec.capacity,
                     processing_time=spec.ptime,
                     type=ptype,
                     P_Residual_time=p_res,
-                    cleaning_duration=clean_dur,
-                    cleaning_trigger_wafers=clean_trig,
+                    cleaning_duration=max(1, c_dur),
+                    cleaning_trigger_wafers=max(1, c_trig),
                     scrap_clip_threshold=scrap_clip,
                 )
             else:
