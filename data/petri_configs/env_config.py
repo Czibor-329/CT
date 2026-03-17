@@ -322,7 +322,7 @@ class PetriEnvConfig:
     def load(cls, path: Union[str, Path]) -> "PetriEnvConfig":
         """从 JSON 文件加载配置。"""
         path = Path(path)
-        print("loading petri config from", path)
+        #print("loading petri config from", path)
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         # 旧参数名迁移到新参数名（新参数优先）

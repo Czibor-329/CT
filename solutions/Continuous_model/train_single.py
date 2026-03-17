@@ -1,24 +1,25 @@
 """
-单设备单动作 PPO 训练脚本（两阶段 release 追责回填）。
+单设备单动作 PPO 训练脚本（Ultra collector + Batched PPO update）。
 """
 
 from __future__ import annotations
 
+import copy
 import os
 from collections import defaultdict, deque
 from datetime import datetime
 from time import perf_counter
+from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import Adam
-from torchrl.modules import MaskedCategorical
-from tensordict import TensorDict
-from torchrl.envs.utils import ExplorationType, set_exploration_type
 from data.ppo_configs.training_config import PPOTrainingConfig
-from solutions.Continuous_model.env_single import Env_PN_Single
+from solutions.Continuous_model.env_single import Env_PN_Single, FastEnvWrapper, VectorEnv
 from solutions.PPO.network.models import MaskedPolicyHead
 from pathlib import Path
+import numpy as np
 
 
 class SingleActionPolicyModule(nn.Module):
@@ -35,120 +36,374 @@ class SingleActionPolicyModule(nn.Module):
         return self.backbone(observation_f)
 
 
-def collect_rollout_single(
-    env: Env_PN_Single,
-    policy_backbone: MaskedPolicyHead,
+@torch.no_grad()
+def _sample_actions_masked(logits: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    高速采样：不创建 distribution 对象，直接 softmax+multinomial。
+    """
+    # 极端情况下若 mask 全 False，回退到动作 0，避免 softmax NaN。
+    valid = mask.any(dim=-1, keepdim=True)
+    if not torch.all(valid):
+        mask = mask.clone()
+        mask[~valid.expand_as(mask)] = False
+        mask[~valid.squeeze(-1), 0] = True
+    masked_logits = logits.masked_fill(~mask, -1e9)
+    probs = torch.softmax(masked_logits, dim=-1)
+    actions = torch.multinomial(probs, 1).squeeze(-1)
+    selected = probs.gather(1, actions.unsqueeze(-1)).squeeze(-1).clamp_min_(1e-12)
+    log_probs = torch.log(selected)
+    return actions, log_probs
+
+
+def _masked_logprob_entropy(
+    logits: torch.Tensor,
+    mask: torch.Tensor,
+    actions: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    更新阶段 fused 计算：
+    logits + mask -> log_prob(action), entropy
+    避免构造 MaskedCategorical 对象。
+    """
+    valid = mask.any(dim=-1, keepdim=True)
+    if not torch.all(valid):
+        mask = mask.clone()
+        mask[~valid.expand_as(mask)] = False
+        mask[~valid.squeeze(-1), 0] = True
+    masked_logits = logits.masked_fill(~mask, -1e9)
+    log_probs = F.log_softmax(masked_logits, dim=-1)
+    action_log_prob = log_probs.gather(1, actions.unsqueeze(-1)).squeeze(-1)
+    probs = log_probs.exp()
+    entropy = -(probs * log_probs).sum(dim=-1)
+    return action_log_prob, entropy
+
+
+def _alloc_rollout_buffers(
     n_steps: int,
-    device: str = "cpu",
-    blame_enabled: bool = False,
+    n_envs: int,
+    obs_dim: int,
+    n_actions: int,
+    pin_memory: bool,
+) -> dict[str, torch.Tensor]:
+    alloc_kwargs: dict[str, Any] = {"pin_memory": True} if pin_memory else {}
+    return {
+        "obs": torch.empty((n_steps, n_envs, obs_dim), dtype=torch.float32, **alloc_kwargs),
+        "next_obs": torch.empty((n_steps, n_envs, obs_dim), dtype=torch.float32, **alloc_kwargs),
+        "actions": torch.empty((n_steps, n_envs), dtype=torch.int64, **alloc_kwargs),
+        "log_probs": torch.empty((n_steps, n_envs), dtype=torch.float32, **alloc_kwargs),
+        "rewards": torch.empty((n_steps, n_envs), dtype=torch.float32, **alloc_kwargs),
+        "dones": torch.empty((n_steps, n_envs), dtype=torch.bool, **alloc_kwargs),
+        "action_mask": torch.empty((n_steps, n_envs, n_actions), dtype=torch.bool, **alloc_kwargs),
+        "finish": torch.empty((n_steps, n_envs), dtype=torch.bool, **alloc_kwargs),
+        "scrap": torch.empty((n_steps, n_envs), dtype=torch.bool, **alloc_kwargs),
+        "deadlock": torch.empty((n_steps, n_envs), dtype=torch.bool, **alloc_kwargs),
+        "time": torch.empty((n_steps, n_envs), dtype=torch.int64, **alloc_kwargs),
+    }
+
+
+@torch.no_grad()
+def collect_rollout_ultra(
+    env_fn,
+    policy,
+    n_steps,
+    n_envs=8,
+    rollout_device="cpu",
+    state: dict[str, Any] | None = None,
+    pin_memory: bool = False,
 ):
     """
-    Rollout 采样（预分配 tensor 版本）。
-    blame_enabled=False 时跳过 fire_log_ranges 追踪。
+    工业级高速 rollout：
+    - 全程 CPU rollout + tensor buffer
+    - 纯 tensor 预分配 buffer
+    - 可跨 batch 续采样（state 持有 env/obs/mask，不强制 reset）
     """
-    obs_dim = env.observation_spec["observation"].shape[0]
-    n_act = env.n_actions
-    on_cpu = (device == "cpu")
+    if str(rollout_device) != "cpu":
+        raise ValueError("collect_rollout_ultra 当前仅支持 rollout_device='cpu'")
+    if state is None:
+        state = {}
 
-    obs_buf = torch.zeros(n_steps, obs_dim, dtype=torch.float32)
-    mask_buf = torch.zeros(n_steps, n_act, dtype=torch.bool)
-    action_buf = torch.zeros(n_steps, dtype=torch.int64)
-    log_prob_buf = torch.zeros(n_steps, dtype=torch.float32)
-    reward_buf = torch.zeros(n_steps, 1, dtype=torch.float32)
-    done_buf = torch.zeros(n_steps, dtype=torch.bool)
-    finish_buf = torch.zeros(n_steps, dtype=torch.bool)
-    scrap_buf = torch.zeros(n_steps, dtype=torch.bool)
-    deadlock_buf = torch.zeros(n_steps, dtype=torch.bool)
-    time_buf = torch.zeros(n_steps, 1, dtype=torch.int64)
-    next_obs_buf = torch.zeros(n_steps, obs_dim, dtype=torch.float32)
-
-    _FALSE = torch.tensor(False)
-    fire_log_ranges: list | None = [] if blame_enabled else None
-    td = env.reset()
-    second_pass_events = 0
-
-    for i in range(n_steps):
-        obs = td["observation"].unsqueeze(0).to(device)
-        mask = td["action_mask"].unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            logits = policy_backbone(obs.float())
-            dist = MaskedCategorical(logits=logits, mask=mask.bool())
-            action = dist.sample()
-            log_prob = dist.log_prob(action)
-
-        obs_buf[i] = td["observation"]
-        mask_buf[i] = td["action_mask"]
-        a = action.squeeze(0)
-        lp = log_prob.squeeze(0)
-        if not on_cpu:
-            a = a.cpu()
-            lp = lp.cpu()
-        action_buf[i] = a
-        log_prob_buf[i] = lp
-
-        if blame_enabled:
-            fire_start = len(env.net.fire_log)
-
-        step_td = td.clone()
-        step_td["action"] = a
-        td_next = env.step(step_td)
-
-        if blame_enabled:
-            fire_end = len(env.net.fire_log)
-            fire_log_ranges.append((fire_start, fire_end))
-
-        nxt = td_next["next"]
-        reward = nxt["reward"]
-        terminated = nxt["terminated"]
-        if on_cpu:
-            reward_buf[i] = reward
-            done_buf[i] = terminated
-            finish_buf[i] = nxt.get("finish", terminated)
-            scrap_buf[i] = nxt.get("scrap", _FALSE)
-            deadlock_buf[i] = nxt.get("deadlock", _FALSE)
-            time_buf[i] = nxt["time"]
-            next_obs_buf[i] = nxt["observation"]
+    n_envs = max(1, int(n_envs))
+    if (state.get("n_envs") != n_envs) or ("env" not in state):
+        if n_envs <= 1:
+            env = FastEnvWrapper(env_fn())
+            obs_np, info = env.reset()
+            obs = torch.from_numpy(np.asarray(obs_np, dtype=np.float32)).unsqueeze(0)
+            mask = torch.from_numpy(np.asarray(info["action_mask"], dtype=np.bool_)).unsqueeze(0)
         else:
-            reward_buf[i] = reward.cpu()
-            done_buf[i] = terminated.cpu()
-            finish_buf[i] = nxt.get("finish", terminated).cpu()
-            scrap_buf[i] = nxt.get("scrap", _FALSE).cpu()
-            deadlock_buf[i] = nxt.get("deadlock", _FALSE).cpu()
-            time_buf[i] = nxt["time"].cpu()
-            next_obs_buf[i] = nxt["observation"].cpu()
+            env = VectorEnv(env_fn=env_fn, n_envs=n_envs)
+            obs_np, info = env.reset()
+            obs = torch.from_numpy(np.asarray(obs_np, dtype=np.float32))
+            mask = torch.from_numpy(np.asarray(info["action_mask"], dtype=np.bool_))
+        state["env"] = env
+        state["obs"] = obs
+        state["mask"] = mask
+        state["n_envs"] = n_envs
 
-        if bool(terminated.item() if hasattr(terminated, "item") else terminated):
-            if blame_enabled:
-                blame = env.net.blame_release_violations()
-                if blame:
-                    for fire_idx, penalty in blame.items():
-                        for step_idx, (fstart, fend) in enumerate(fire_log_ranges):
-                            if fstart <= fire_idx < fend:
-                                reward_buf[step_idx] -= float(penalty)
-                                second_pass_events += 1
-                                break
-                fire_log_ranges.clear()
-            td = env.reset()
+    env = state["env"]
+    obs = state["obs"]
+    mask = state["mask"]
+    obs_dim = int(obs.shape[-1])
+    n_act = int(mask.shape[-1])
+
+    buffers = _alloc_rollout_buffers(
+        n_steps=int(n_steps),
+        n_envs=n_envs,
+        obs_dim=obs_dim,
+        n_actions=n_act,
+        pin_memory=pin_memory,
+    )
+
+    policy = policy.to("cpu").eval()
+    policy_fn = policy.forward
+    step_fn = env.step
+
+    for t in range(int(n_steps)):
+        buffers["obs"][t].copy_(obs)
+        buffers["action_mask"][t].copy_(mask)
+        logits = policy_fn(obs)
+        actions, log_probs = _sample_actions_masked(logits, mask)
+
+        if n_envs <= 1:
+            next_obs_np, rew, done, info = step_fn(int(actions[0].item()))
+            next_obs = torch.from_numpy(np.asarray(next_obs_np, dtype=np.float32)).unsqueeze(0)
+            next_mask = torch.from_numpy(np.asarray(info["action_mask"], dtype=np.bool_)).unsqueeze(0)
+            buffers["actions"][t, 0] = actions[0]
+            buffers["log_probs"][t, 0] = log_probs[0]
+            buffers["rewards"][t, 0] = float(rew)
+            buffers["dones"][t, 0] = bool(done)
+            buffers["finish"][t, 0] = bool(info.get("finish", False))
+            buffers["scrap"][t, 0] = bool(info.get("scrap", False))
+            buffers["deadlock"][t, 0] = bool(info.get("deadlock", False))
+            buffers["time"][t, 0] = int(info.get("time", 0))
         else:
-            td = nxt.clone()
+            next_obs_np, rewards_np, dones_np, info = step_fn(actions.numpy())
+            next_obs = torch.from_numpy(np.asarray(next_obs_np, dtype=np.float32))
+            next_mask = torch.from_numpy(np.asarray(info["action_mask"], dtype=np.bool_))
+            buffers["actions"][t].copy_(actions)
+            buffers["log_probs"][t].copy_(log_probs)
+            buffers["rewards"][t].copy_(torch.from_numpy(np.asarray(rewards_np, dtype=np.float32)))
+            buffers["dones"][t].copy_(torch.from_numpy(np.asarray(dones_np, dtype=np.bool_)))
+            buffers["finish"][t].copy_(torch.from_numpy(np.asarray(info.get("finish"), dtype=np.bool_)))
+            buffers["scrap"][t].copy_(torch.from_numpy(np.asarray(info.get("scrap"), dtype=np.bool_)))
+            buffers["deadlock"][t].copy_(torch.from_numpy(np.asarray(info.get("deadlock"), dtype=np.bool_)))
+            buffers["time"][t].copy_(torch.from_numpy(np.asarray(info.get("time"), dtype=np.int64)))
 
-    rollout = TensorDict({
-        "observation": obs_buf,
-        "observation_f": obs_buf.float(),
-        "action_mask": mask_buf,
-        "action": action_buf,
-        "log_prob": log_prob_buf,
-        "reward": reward_buf,
-        "done": done_buf,
-        "finish": finish_buf,
-        "scrap": scrap_buf,
-        "deadlock": deadlock_buf,
-        "time": time_buf,
-        "next_observation": next_obs_buf,
-        "next_observation_f": next_obs_buf.float(),
-    }, batch_size=[n_steps])
-    return rollout, second_pass_events
+        buffers["next_obs"][t].copy_(next_obs)
+        obs = next_obs
+        mask = next_mask
+
+    state["obs"] = obs
+    state["mask"] = mask
+    buffers["n_actions"] = int(n_act)
+    for key, value in list(buffers.items()):
+        if isinstance(value, torch.Tensor):
+            buffers[key] = value.contiguous()
+    return buffers, state
+
+
+def _gae_scan_impl(delta: torch.Tensor, not_done: torch.Tensor, gamma_lambda: float) -> torch.Tensor:
+    """
+    GAE 递推核心（按 [T, N] 扫描）。
+    使用 torch.compile 包装后可显著减少 Python loop 开销。
+    """
+    t_size = int(delta.shape[0])
+    n_envs = int(delta.shape[1])
+    adv = torch.empty_like(delta)
+    gae = torch.zeros((n_envs,), device=delta.device, dtype=delta.dtype)
+    gl = torch.tensor(gamma_lambda, device=delta.device, dtype=delta.dtype)
+    for t in range(t_size - 1, -1, -1):
+        gae = delta[t] + gl * not_done[t] * gae
+        adv[t] = gae
+    return adv
+
+
+if hasattr(torch, "compile"):
+    try:
+        _gae_scan_compiled = torch.compile(_gae_scan_impl, mode="reduce-overhead")
+    except Exception:
+        _gae_scan_compiled = _gae_scan_impl
+else:
+    _gae_scan_compiled = _gae_scan_impl
+
+_gae_compile_failed = False
+
+
+def _gae_scan(delta: torch.Tensor, not_done: torch.Tensor, gamma_lambda: float) -> torch.Tensor:
+    global _gae_compile_failed
+    # CPU 上直接走 eager，避免 torch.compile 首次编译导致本地训练“卡住”。
+    if delta.device.type != "cuda":
+        return _gae_scan_impl(delta, not_done, gamma_lambda)
+    if _gae_compile_failed:
+        return _gae_scan_impl(delta, not_done, gamma_lambda)
+    try:
+        return _gae_scan_compiled(delta, not_done, gamma_lambda)
+    except Exception:
+        _gae_compile_failed = True
+        return _gae_scan_impl(delta, not_done, gamma_lambda)
+
+
+@torch.no_grad()
+def _compute_gae_and_returns(
+    value_net: nn.Module,
+    obs: torch.Tensor,
+    next_obs: torch.Tensor,
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    gamma: float,
+    gae_lambda: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    向量化 value 评估 + compile GAE:
+    - obs/next_obs shape: [T, N, D]
+    - rewards/dones shape: [T, N]
+    """
+    t_size, n_envs, obs_dim = obs.shape
+    flat = t_size * n_envs
+    obs_cat = torch.cat(
+        [
+            obs.reshape(flat, obs_dim),
+            next_obs.reshape(flat, obs_dim),
+        ],
+        dim=0,
+    )
+    values_cat = value_net(obs_cat).squeeze(-1).to(torch.float32)
+    values = values_cat[:flat].reshape(t_size, n_envs)
+    next_values = values_cat[flat:].reshape(t_size, n_envs)
+    not_done = 1.0 - dones.to(torch.float32)
+    delta = rewards.to(torch.float32) + float(gamma) * next_values * not_done - values
+    advantages = _gae_scan(delta, not_done, float(gamma) * float(gae_lambda))
+    returns = advantages + values
+    return advantages, returns
+
+
+def _flatten_rollout_for_update(
+    rollout: dict[str, torch.Tensor],
+    advantages: torch.Tensor,
+    returns: torch.Tensor,
+    max_frames: int,
+) -> dict[str, torch.Tensor]:
+    obs = rollout["obs"]
+    next_obs = rollout["next_obs"]
+    actions = rollout["actions"]
+    log_probs = rollout["log_probs"]
+    action_mask = rollout["action_mask"]
+    rewards = rollout["rewards"]
+    dones = rollout["dones"]
+    finish = rollout["finish"]
+    scrap = rollout["scrap"]
+    deadlock = rollout["deadlock"]
+    time_arr = rollout["time"]
+
+    t_size, n_envs = actions.shape
+    flat = t_size * n_envs
+    keep = min(int(max_frames), flat)
+
+    return {
+        "obs": obs.reshape(flat, -1)[:keep].contiguous(),
+        "next_obs": next_obs.reshape(flat, -1)[:keep].contiguous(),
+        "actions": actions.reshape(flat)[:keep].contiguous(),
+        "old_log_probs": log_probs.reshape(flat)[:keep].contiguous(),
+        "action_mask": action_mask.reshape(flat, action_mask.shape[-1])[:keep].contiguous(),
+        "rewards": rewards.reshape(flat)[:keep].contiguous(),
+        "dones": dones.reshape(flat)[:keep].contiguous(),
+        "finish": finish.reshape(flat)[:keep].contiguous(),
+        "scrap": scrap.reshape(flat)[:keep].contiguous(),
+        "deadlock": deadlock.reshape(flat)[:keep].contiguous(),
+        "time": time_arr.reshape(flat)[:keep].contiguous(),
+        "advantages": advantages.reshape(flat)[:keep].contiguous(),
+        "returns": returns.reshape(flat)[:keep].contiguous(),
+    }
+
+
+def _ppo_update_batched(
+    policy_backbone: nn.Module,
+    value_net: nn.Module,
+    optim: torch.optim.Optimizer,
+    train_params: list[torch.nn.Parameter],
+    batch: dict[str, torch.Tensor],
+    num_epochs: int,
+    clip_epsilon: float,
+    entropy_coef: float,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+    scaler: torch.cuda.amp.GradScaler | None,
+) -> dict[str, float]:
+    """
+    Batched PPO 更新：
+    - 每个 epoch 单次大 batch forward（无 minibatch Python 内层循环）
+    - 用 index_select + contiguous 保持访存连续
+    """
+    obs = batch["obs"]
+    action_mask = batch["action_mask"].bool()
+    actions = batch["actions"].long()
+    old_log_probs = batch["old_log_probs"].to(torch.float32)
+    returns = batch["returns"].to(torch.float32)
+    advantages = batch["advantages"].to(torch.float32)
+
+    adv_mean = advantages.mean()
+    adv_std = advantages.std(unbiased=False).clamp_min_(1e-6)
+    advantages = (advantages - adv_mean) / adv_std
+
+    last_policy_loss = 0.0
+    last_value_loss = 0.0
+    last_entropy = 0.0
+
+    for _ in range(int(num_epochs)):
+        perm = torch.randperm(obs.shape[0], device=obs.device)
+        obs_e = obs.index_select(0, perm)
+        mask_e = action_mask.index_select(0, perm)
+        act_e = actions.index_select(0, perm)
+        old_lp_e = old_log_probs.index_select(0, perm)
+        adv_e = advantages.index_select(0, perm)
+        ret_e = returns.index_select(0, perm)
+
+        with torch.autocast(
+            device_type="cuda" if obs.is_cuda else "cpu",
+            dtype=amp_dtype,
+            enabled=amp_enabled and obs.is_cuda,
+        ):
+            logits = policy_backbone(obs_e)
+            value_pred = value_net(obs_e).squeeze(-1)
+
+        new_log_prob, entropy = _masked_logprob_entropy(logits.to(torch.float32), mask_e, act_e)
+        ratio = torch.exp(new_log_prob - old_lp_e)
+        surr1 = ratio * adv_e
+        surr2 = ratio.clamp(1.0 - float(clip_epsilon), 1.0 + float(clip_epsilon)) * adv_e
+        policy_loss = -torch.minimum(surr1, surr2).mean()
+        value_loss = 0.5 * (value_pred.to(torch.float32) - ret_e).pow(2).mean()
+        entropy_mean = entropy.mean()
+        loss = policy_loss + value_loss - float(entropy_coef) * entropy_mean
+
+        optim.zero_grad(set_to_none=True)
+        if amp_enabled and scaler is not None and scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.unscale_(optim)
+            nn.utils.clip_grad_norm_(train_params, max_norm=1.0)
+            scaler.step(optim)
+            scaler.update()
+        else:
+            loss.backward()
+            nn.utils.clip_grad_norm_(train_params, max_norm=1.0)
+            optim.step()
+
+        last_policy_loss = float(policy_loss.detach().item())
+        last_value_loss = float(value_loss.detach().item())
+        last_entropy = float(entropy_mean.detach().item())
+
+    return {
+        "policy_loss": last_policy_loss,
+        "value_loss": last_value_loss,
+        "entropy": last_entropy,
+    }
+
+
+def _maybe_compile_model(model: nn.Module, enabled: bool) -> nn.Module:
+    if not enabled or not hasattr(torch, "compile"):
+        return model
+    try:
+        return torch.compile(model, mode="max-autotune")
+    except Exception:
+        return model
 
 
 def train_single(
@@ -157,12 +412,12 @@ def train_single(
     device_mode: str = "single",
     proc_time_rand_enabled: bool | None = None,
     proc_time_rand_scale_map: dict[str, dict[str, float]] | None = None,
-    blame_enabled: bool = False,
+    rollout_n_envs: int = 1,
 ):
     assert config is not None, "training config must be provided"
 
-    print("[Single PPO Training]")
-    print(config)
+    print("[Single PPO Training]", flush=True)
+    print(config, flush=True)
 
     torch.manual_seed(config.seed)
     device = config.device
@@ -172,6 +427,19 @@ def train_single(
             device = "cpu"
         else:
             torch.cuda.manual_seed_all(config.seed)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+
+    use_cuda_update = str(device).startswith("cuda")
+    amp_enabled = use_cuda_update
+    amp_dtype = torch.bfloat16 if (use_cuda_update and torch.cuda.is_bf16_supported()) else torch.float16
+    scaler: torch.cuda.amp.GradScaler | None = None
+    if amp_enabled and (amp_dtype == torch.float16):
+        try:
+            scaler = torch.amp.GradScaler("cuda", enabled=True)
+        except Exception:
+            scaler = torch.cuda.amp.GradScaler(enabled=True)
+
     env = Env_PN_Single(
         device="cpu",
         detailed_reward=True,
@@ -179,13 +447,22 @@ def train_single(
         proc_time_rand_enabled=proc_time_rand_enabled,
         proc_time_rand_scale_map=proc_time_rand_scale_map,
     )
+    # 仅保留 ultra 模式：rollout 固定在 CPU。
+    rollout_device = "cpu"
+    rollout_n_envs = max(1, int(rollout_n_envs))
+
     print(f"  计算设备: {device}", flush=True)
     print(f"  环境类型: {env.__class__.__name__}", flush=True)
+    print(
+        f"  Rollout Collector: ultra "
+        f"(n_envs={rollout_n_envs}, rollout_device={rollout_device})",
+        flush=True,
+    )
 
     n_obs = env.observation_spec["observation"].shape[0]
     n_actions = env.n_actions
-    print(f"  观测维度: {n_obs}")
-    print(f"  动作空间: {n_actions}")
+    print(f"  观测维度: {n_obs}", flush=True)
+    print(f"  动作空间: {n_actions}", flush=True)
 
     policy_backbone = MaskedPolicyHead(
         hidden=config.n_hidden,
@@ -196,13 +473,11 @@ def train_single(
     policy_module = SingleActionPolicyModule(policy_backbone).to(device)
 
     if checkpoint_path is not None and os.path.exists(checkpoint_path):
-        print(f"从 checkpoint 加载: {checkpoint_path}")
+        print(f"从 checkpoint 加载: {checkpoint_path}", flush=True)
         state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
         try:
-            # 新格式：与并发训练一致，保存 policy_module.state_dict()
             policy_module.load_state_dict(state_dict)
         except RuntimeError:
-            # 兼容旧格式：仅 backbone.state_dict()
             policy_backbone.load_state_dict(state_dict)
 
     value_net = nn.Sequential(
@@ -212,7 +487,15 @@ def train_single(
         nn.Linear(config.n_hidden, 1),
     ).to(device)
 
-    optim = Adam(list(policy_backbone.parameters()) + list(value_net.parameters()), lr=config.lr)
+    train_params = list(policy_backbone.parameters()) + list(value_net.parameters())
+    optim = Adam(train_params, lr=config.lr, foreach=bool(use_cuda_update))
+
+    # 仅编译 update 侧模型；rollout 侧始终使用 CPU 模型。
+    policy_train = _maybe_compile_model(policy_backbone, enabled=use_cuda_update)
+    value_train = _maybe_compile_model(value_net, enabled=use_cuda_update)
+
+    rollout_policy = copy.deepcopy(policy_backbone).to("cpu").eval() if use_cuda_update else policy_backbone
+    ultra_state: dict[str, Any] = {}
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     saved_models_dir = os.path.join(os.path.dirname(__file__), "saved_models")
@@ -227,130 +510,160 @@ def train_single(
 
     training_start = perf_counter()
     batch_time_window: deque[float] = deque(maxlen=10)
+    total_env_steps = 0
 
-    with set_exploration_type(ExplorationType.RANDOM):
-        for batch_idx in range(config.total_batch):
-            t_batch = perf_counter()
+    for batch_idx in range(config.total_batch):
+        t_batch = perf_counter()
 
-            rollout, second_pass_events = collect_rollout_single(
-                env, policy_backbone, config.frames_per_batch, device=device, blame_enabled=blame_enabled
-            )
-            t_rollout_end = perf_counter()
-
-            rollout = rollout.to(device)
-
+        # CPU rollout 前同步参数（一次性复制，避免 step 内频繁 .to()）。
+        policy_backbone.eval()
+        if use_cuda_update:
             with torch.no_grad():
-                values = value_net(rollout["observation_f"]).squeeze(-1)
-                next_values = value_net(rollout["next_observation_f"]).squeeze(-1)
-                rewards = rollout["reward"].squeeze(-1)
-                dones = rollout["done"].float().squeeze(-1)
-                delta = rewards + config.gamma * next_values * (1 - dones) - values
-                advantages = torch.zeros_like(rewards)
-                gae = 0.0
-                for t in reversed(range(len(rewards))):
-                    gae = delta[t] + config.gamma * config.gae_lambda * (1 - dones[t]) * gae
-                    advantages[t] = gae
-                returns = advantages + values
+                rollout_policy.load_state_dict(policy_backbone.state_dict(), strict=True)
+            policy_for_rollout = rollout_policy
+        else:
+            policy_for_rollout = policy_backbone
 
-            rollout["advantage"] = advantages
-            rollout["value_target"] = returns
+        # Ultra rollout：每个环境采样 steps_per_env 步，再拉平成 frames_per_batch。
+        steps_per_env = max(1, (int(config.frames_per_batch) + rollout_n_envs - 1) // rollout_n_envs)
+        rollout_cpu, ultra_state = collect_rollout_ultra(
+            env_fn=lambda: Env_PN_Single(
+                device="cpu",
+                detailed_reward=True,
+                device_mode=device_mode,
+                proc_time_rand_enabled=proc_time_rand_enabled,
+                proc_time_rand_scale_map=proc_time_rand_scale_map,
+            ),
+            policy=policy_for_rollout,
+            n_steps=steps_per_env,
+            n_envs=rollout_n_envs,
+            rollout_device=rollout_device,
+            state=ultra_state,
+            pin_memory=use_cuda_update,
+        )
 
-            for _ in range(config.num_epochs):
-                indices = torch.randperm(len(rollout))
-                for start in range(0, len(rollout), config.sub_batch_size):
-                    end = start + config.sub_batch_size
-                    batch = rollout[indices[start:end]]
+        t_rollout_end = perf_counter()
 
-                    obs_f = batch["observation_f"]
-                    mask = batch["action_mask"].bool()
-                    old_action = batch["action"]
-                    old_log_prob = batch["log_prob"]
-                    adv = batch["advantage"]
-                    ret = batch["value_target"]
+        available_frames = int(rollout_cpu["actions"].numel())
+        used_frames = min(int(config.frames_per_batch), available_frames)
+        total_env_steps += used_frames
 
-                    logits = policy_backbone(obs_f)
-                    dist = MaskedCategorical(logits=logits, mask=mask)
-                    new_log_prob = dist.log_prob(old_action)
+        # CPU->GPU 单次搬运，更新阶段完全在训练设备。
+        non_blocking = bool(use_cuda_update)
+        rollout_dev = {
+            "obs": rollout_cpu["obs"].to(device, non_blocking=non_blocking),
+            "next_obs": rollout_cpu["next_obs"].to(device, non_blocking=non_blocking),
+            "actions": rollout_cpu["actions"].to(device, non_blocking=non_blocking),
+            "log_probs": rollout_cpu["log_probs"].to(device, non_blocking=non_blocking),
+            "rewards": rollout_cpu["rewards"].to(device, non_blocking=non_blocking),
+            "dones": rollout_cpu["dones"].to(device, non_blocking=non_blocking),
+            "action_mask": rollout_cpu["action_mask"].to(device, non_blocking=non_blocking),
+            "finish": rollout_cpu["finish"].to(device, non_blocking=non_blocking),
+            "scrap": rollout_cpu["scrap"].to(device, non_blocking=non_blocking),
+            "deadlock": rollout_cpu["deadlock"].to(device, non_blocking=non_blocking),
+            "time": rollout_cpu["time"].to(device, non_blocking=non_blocking),
+        }
 
-                    ratio = torch.exp(new_log_prob - old_log_prob)
-                    adv_norm = (adv - adv.mean()) / (adv.std() + 1e-8)
-                    surr1 = ratio * adv_norm
-                    surr2 = torch.clamp(ratio, 1 - config.clip_epsilon, 1 + config.clip_epsilon) * adv_norm
-                    policy_loss = -torch.min(surr1, surr2).mean()
-
-                    value_pred = value_net(obs_f).squeeze(-1)
-                    value_loss = 0.5 * (value_pred - ret).pow(2).mean()
-                    entropy_loss = -config.entropy_start * dist.entropy().mean()
-                    loss = policy_loss + value_loss + entropy_loss
-
-                    optim.zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(list(policy_backbone.parameters()) + list(value_net.parameters()), max_norm=1.0)
-                    optim.step()
-
-            t_update_end = perf_counter()
-
-            rollout_time = t_rollout_end - t_batch
-            update_time = t_update_end - t_rollout_end
-            batch_time = t_update_end - t_batch
-            steps_per_sec = config.frames_per_batch / rollout_time if rollout_time > 0 else 0.0
-            batch_time_window.append(batch_time)
-            remaining = config.total_batch - (batch_idx + 1)
-            eta_s = remaining * (sum(batch_time_window) / len(batch_time_window))
-            eta_str = f"{eta_s / 60:.1f}m" if eta_s >= 60 else f"{eta_s:.0f}s"
-
-            ep_reward = rollout["reward"].sum().item()
-            finish_count = rollout["finish"].sum().item()
-            scrap_count = rollout["scrap"].sum().item()
-            deadlock_count = rollout["deadlock"].sum().item()
-
-            finish_mask = rollout["finish"].squeeze(-1).bool()
-            if finish_mask.any():
-                finish_times = rollout["time"][finish_mask].squeeze(-1).float()
-                avg_makespan = finish_times.mean().item()
-            else:
-                avg_makespan = 0.0
-
-            log["reward"].append(ep_reward)
-            log["finish"].append(finish_count)
-            log["scrap"].append(scrap_count)
-            log["deadlock"].append(deadlock_count)
-            log["makespan"].append(avg_makespan)
-            log["second_pass_events"].append(second_pass_events)
-            log["rollout_time"].append(rollout_time)
-            log["update_time"].append(update_time)
-            log["steps_per_sec"].append(steps_per_sec)
-
-            print(
-                f"batch {batch_idx+1:04d} | reward={ep_reward:.2f} | finish={int(finish_count)} "
-                f"| scrap={int(scrap_count)} | deadlock={int(deadlock_count)} "
-                f"| makespan={avg_makespan:.1f}"
-                f" | rollout={rollout_time:.2f}s update={update_time:.2f}s"
-                f" | steps/s={steps_per_sec:.0f} ETA={eta_str}",
-                flush=True,
+        policy_train.train()
+        value_train.train()
+        with torch.no_grad():
+            advantages, returns = _compute_gae_and_returns(
+                value_net=value_train,
+                obs=rollout_dev["obs"],
+                next_obs=rollout_dev["next_obs"],
+                rewards=rollout_dev["rewards"],
+                dones=rollout_dev["dones"],
+                gamma=float(config.gamma),
+                gae_lambda=float(config.gae_lambda),
             )
 
-            if ep_reward > best_reward and finish_count > 0:
-                best_reward = ep_reward
-                torch.save(policy_module.state_dict(), best_model_path)
-                backup_path = os.path.join(backup_dir, f"{model_prefix}_best.pt")
-                torch.save(policy_module.state_dict(), backup_path)
-                print(f"  -> New best model! reward={ep_reward:.2f}", flush=True)
+        update_batch = _flatten_rollout_for_update(
+            rollout=rollout_dev,
+            advantages=advantages,
+            returns=returns,
+            max_frames=used_frames,
+        )
+
+        update_stats = _ppo_update_batched(
+            policy_backbone=policy_train,
+            value_net=value_train,
+            optim=optim,
+            train_params=train_params,
+            batch=update_batch,
+            num_epochs=int(config.num_epochs),
+            clip_epsilon=float(config.clip_epsilon),
+            entropy_coef=float(config.entropy_start),
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+            scaler=scaler,
+        )
+
+        t_update_end = perf_counter()
+
+        rollout_time = t_rollout_end - t_batch
+        update_time = t_update_end - t_rollout_end
+        batch_time = t_update_end - t_batch
+        steps_per_sec = used_frames / rollout_time if rollout_time > 0 else 0.0
+        batch_time_window.append(batch_time)
+        remaining = config.total_batch - (batch_idx + 1)
+        eta_s = remaining * (sum(batch_time_window) / len(batch_time_window))
+        eta_str = f"{eta_s / 60:.1f}m" if eta_s >= 60 else f"{eta_s:.0f}s"
+
+        # 统计指标使用 CPU rollout，避免额外 GPU 同步。
+        flat_rewards = rollout_cpu["rewards"].reshape(-1)[:used_frames]
+        flat_finish = rollout_cpu["finish"].reshape(-1).bool()[:used_frames]
+        flat_scrap = rollout_cpu["scrap"].reshape(-1).bool()[:used_frames]
+        flat_deadlock = rollout_cpu["deadlock"].reshape(-1).bool()[:used_frames]
+        flat_time = rollout_cpu["time"].reshape(-1)[:used_frames]
+
+        ep_reward = float(flat_rewards.sum().item())
+        finish_count = int(flat_finish.sum().item())
+        scrap_count = int(flat_scrap.sum().item())
+        deadlock_count = int(flat_deadlock.sum().item())
+        avg_makespan = float(flat_time[flat_finish].float().mean().item()) if finish_count > 0 else 0.0
+
+        log["reward"].append(ep_reward)
+        log["finish"].append(finish_count)
+        log["scrap"].append(scrap_count)
+        log["deadlock"].append(deadlock_count)
+        log["makespan"].append(avg_makespan)
+        log["rollout_time"].append(rollout_time)
+        log["update_time"].append(update_time)
+        log["steps_per_sec"].append(steps_per_sec)
+        log["frames"].append(used_frames)
+        log["policy_loss"].append(update_stats["policy_loss"])
+        log["value_loss"].append(update_stats["value_loss"])
+        log["entropy"].append(update_stats["entropy"])
+
+        print(
+            f"batch {batch_idx+1:04d} | reward={ep_reward:.2f} | finish={finish_count} "
+            f"| scrap={scrap_count} | deadlock={deadlock_count} | makespan={avg_makespan:.1f} "
+            f"| rollout={rollout_time:.2f}s update={update_time:.2f}s "
+            f"| steps/s={steps_per_sec:.0f} | p={update_stats['policy_loss']:.4f} "
+            f"v={update_stats['value_loss']:.4f} ent={update_stats['entropy']:.4f} ETA={eta_str}",
+            flush=True,
+        )
+
+        if ep_reward > best_reward and finish_count > 0:
+            best_reward = ep_reward
+            torch.save(policy_module.state_dict(), best_model_path)
+            backup_path = os.path.join(backup_dir, f"{model_prefix}_best.pt")
+            torch.save(policy_module.state_dict(), backup_path)
+            print(f"  -> New best model! reward={ep_reward:.2f}", flush=True)
 
     total_training_time = perf_counter() - training_start
-    total_steps = config.total_batch * config.frames_per_batch
     total_rollout = sum(log["rollout_time"])
     total_update = sum(log["update_time"])
     avg_rollout = total_rollout / len(log["rollout_time"]) if log["rollout_time"] else 0.0
     avg_update = total_update / len(log["update_time"]) if log["update_time"] else 0.0
     avg_batch = avg_rollout + avg_update
-    overall_sps = total_steps / total_rollout if total_rollout > 0 else 0.0
-    rollout_pct = (avg_rollout / avg_batch * 100) if avg_batch > 0 else 0
-    update_pct = (avg_update / avg_batch * 100) if avg_batch > 0 else 0
+    overall_sps = (total_env_steps / total_rollout) if total_rollout > 0 else 0.0
+    rollout_pct = (avg_rollout / avg_batch * 100) if avg_batch > 0 else 0.0
+    update_pct = (avg_update / avg_batch * 100) if avg_batch > 0 else 0.0
 
-    print(f"\n[Training Summary]", flush=True)
+    print("\n[Training Summary]", flush=True)
     print(f"  总训练时间: {total_training_time:.1f}s ({total_training_time / 60:.1f}m)", flush=True)
-    print(f"  总 env steps: {total_steps}", flush=True)
+    print(f"  总 env steps: {total_env_steps}", flush=True)
     print(
         f"  平均 batch: {avg_batch:.2f}s "
         f"(rollout={avg_rollout:.2f}s [{rollout_pct:.0f}%] "
@@ -360,13 +673,23 @@ def train_single(
     print(f"  平均 steps/sec: {overall_sps:.0f}", flush=True)
     print(f"  Best reward: {best_reward:.2f}", flush=True)
 
-    step_profile = env.net.get_step_profile_summary()
-    if int(step_profile.get("count", 0)) > 0:
+    # Ultra 模式下训练真实发生在 ultra_state["env"]，这里从其内部环境提取 step profile。
+    step_profile = None
+    profile_env = ultra_state.get("env")
+    if isinstance(profile_env, FastEnvWrapper) and hasattr(profile_env.env, "net"):
+        step_profile = profile_env.env.net.get_step_profile_summary()
+    elif isinstance(profile_env, VectorEnv) and profile_env.envs:
+        first_env = profile_env.envs[0]
+        if isinstance(first_env, FastEnvWrapper) and hasattr(first_env.env, "net"):
+            step_profile = first_env.env.net.get_step_profile_summary()
+
+    if isinstance(step_profile, dict) and int(step_profile.get("count", 0)) > 0:
         print(
             f"[Step Time Profile] steps={int(step_profile['count'])} "
             f"| total={float(step_profile['total_ms']):.2f}ms "
             f"| avg_step={float(step_profile['avg_ms']):.4f}ms "
-            f"| steps_per_sec={float(step_profile.get('steps_per_sec', 0.0)):.2f}"
+            f"| steps_per_sec={float(step_profile.get('steps_per_sec', 0.0)):.2f}",
+            flush=True,
         )
         ordered_segments = [
             ("get_enable_t", "get_enable_t"),
@@ -381,8 +704,10 @@ def train_single(
             print(
                 f"  {label:<12} total={float(seg['total_ms']):.2f}ms "
                 f"| avg={float(seg['avg_ms']):.4f}ms "
-                f"| ratio={float(seg['ratio_pct']):.2f}%"
+                f"| ratio={float(seg['ratio_pct']):.2f}%",
+                flush=True,
             )
+
     final_path = os.path.join(backup_dir, f"{model_prefix}_final.pt")
     torch.save(policy_module.state_dict(), final_path)
     print(f"Final model: {final_path}", flush=True)
@@ -397,12 +722,12 @@ def build_single_env() -> Env_PN_Single:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="单设备单动作 PPO 训练（两阶段 release 回填）")
+    parser = argparse.ArgumentParser(description="单设备单动作 PPO 训练（Ultra 模式）")
     parser.add_argument("--device", type=str, default="single", choices=["single", "cascade"], help="设备模式（single/cascade）")
     parser.add_argument("--compute-device", type=str, default=None, help="计算设备：cpu / cuda / cuda:0；未指定时：有 CUDA 则用 cuda，否则用配置文件中的 device")
     parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint 路径")
     parser.add_argument("--proc-time-rand-enabled", action="store_true", help="开启单设备工序时间随机扰动")
-    parser.add_argument("--blame", action="store_true", help="开启二次追责（episode 结束后 blame_release_violations 回填惩罚）")
+    parser.add_argument("--rollout-n-envs", type=int, default=1, help="ultra collector 并行环境数")
     args = parser.parse_args()
 
     root = Path(__file__).parents[2]
@@ -417,10 +742,11 @@ if __name__ == "__main__":
         checkpoint_path = root / "models" / args.checkpoint
     else:
         checkpoint_path = None
+
     train_single(
         config=cfg,
         checkpoint_path=checkpoint_path,
         device_mode=args.device,
         proc_time_rand_enabled=True if args.proc_time_rand_enabled else None,
-        blame_enabled=args.blame,
+        rollout_n_envs=args.rollout_n_envs,
     )

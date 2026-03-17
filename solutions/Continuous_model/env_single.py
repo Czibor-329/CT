@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 from tensordict import TensorDict
 from torchrl.data import Binary, Categorical, Composite, Unbounded
@@ -20,6 +21,52 @@ from pathlib import Path
 
 _TRUE_T = torch.tensor(True)
 _FALSE_T = torch.tensor(False)
+
+try:
+    from numba import njit
+except Exception:  # pragma: no cover - numba 可选依赖
+    njit = None
+
+
+def _step_core_numpy(
+    action: int,
+    wait_action_start: int,
+    wait_durations: np.ndarray,
+) -> Tuple[bool, int, int]:
+    """
+    纯 numpy 数值路径：解析动作类型与参数。
+    返回: (is_wait, transition_idx, wait_duration)
+    """
+    a = int(action)
+    start = int(wait_action_start)
+    if a >= start:
+        idx = a - start
+        if idx < 0 or idx >= int(wait_durations.shape[0]):
+            return True, -1, int(wait_durations[0]) if wait_durations.size > 0 else 5
+        return True, -1, int(wait_durations[idx])
+    return False, a, 0
+
+
+if njit is not None:
+    @njit(cache=True)
+    def step_core_numba(
+        action: int,
+        wait_action_start: int,
+        wait_durations: np.ndarray,
+    ) -> Tuple[np.bool_, np.int64, np.int64]:
+        a = int(action)
+        start = int(wait_action_start)
+        if a >= start:
+            idx = a - start
+            if idx < 0 or idx >= wait_durations.shape[0]:
+                fallback = 5
+                if wait_durations.shape[0] > 0:
+                    fallback = int(wait_durations[0])
+                return True, -1, fallback
+            return True, -1, int(wait_durations[idx])
+        return False, a, 0
+else:
+    step_core_numba = _step_core_numpy
 
 
 class Env_PN_Single(EnvBase):
@@ -216,3 +263,183 @@ class Env_PN_Single(EnvBase):
     def _set_seed(self, seed: int | None):
         rng = torch.manual_seed(seed)
         self.rng = rng
+
+
+class FastEnvWrapper:
+    """
+    高性能 CPU rollout 接口适配器。
+    统一输出:
+      reset() -> (obs, info)
+      step(action) -> (obs, reward, done, info)
+    """
+
+    def __init__(self, env: Any):
+        self.env = env
+        self._last_obs_np: Optional[np.ndarray] = None
+        self._last_mask_np: Optional[np.ndarray] = None
+
+        if hasattr(env, "wait_action_start"):
+            self.wait_action_start = int(env.wait_action_start)
+            self.wait_durations = np.asarray(getattr(env, "wait_durations", [5]), dtype=np.int64)
+        elif hasattr(env, "net"):
+            self.wait_action_start = int(getattr(env.net, "T", 0))
+            self.wait_durations = np.asarray(getattr(env.net, "wait_durations", [5]), dtype=np.int64)
+        else:
+            self.wait_action_start = 0
+            self.wait_durations = np.asarray([5], dtype=np.int64)
+
+    def _as_numpy(self, x: Any, dtype: np.dtype | None = None) -> np.ndarray:
+        if isinstance(x, np.ndarray):
+            return x.astype(dtype, copy=False) if dtype is not None else x
+        if torch.is_tensor(x):
+            arr = x.detach().cpu().numpy()
+            return arr.astype(dtype, copy=False) if dtype is not None else arr
+        arr = np.asarray(x)
+        return arr.astype(dtype, copy=False) if dtype is not None else arr
+
+    def _extract_obs_mask(self, state: Any) -> Tuple[np.ndarray, np.ndarray]:
+        if isinstance(state, TensorDict):
+            obs = self._as_numpy(state["observation"], np.float32)
+            mask = self._as_numpy(state["action_mask"], np.bool_)
+            return obs, mask
+        if isinstance(state, dict):
+            obs = self._as_numpy(state["observation"], np.float32)
+            mask = self._as_numpy(state["action_mask"], np.bool_)
+            return obs, mask
+        if isinstance(state, tuple) and len(state) >= 2:
+            obs = self._as_numpy(state[0], np.float32)
+            mask = self._as_numpy(state[1], np.bool_)
+            return obs, mask
+        raise TypeError(f"Unsupported reset/step return type: {type(state)}")
+
+    def _fast_step_single_env(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
+        if isinstance(self.env, Env_PN_Single):
+            is_wait, transition_idx, wait_duration = step_core_numba(
+                int(action),
+                self.wait_action_start,
+                self.wait_durations,
+            )
+            detailed = bool(getattr(self.env, "eval_mode", False))
+            if bool(is_wait):
+                done, reward_result, scrap, action_mask, obs = self.env.net.step(
+                    wait_duration=int(wait_duration),
+                    detailed_reward=detailed,
+                )
+            else:
+                done, reward_result, scrap, action_mask, obs = self.env.net.step(
+                    a1=int(transition_idx),
+                    detailed_reward=detailed,
+                )
+            reward = float(reward_result) if not isinstance(reward_result, dict) else float(reward_result.get("total", 0.0))
+            deadlock = bool(getattr(self.env.net, "_last_deadlock", False))
+            info: Dict[str, Any] = {
+                "action_mask": np.asarray(action_mask, dtype=np.bool_),
+                "scrap": bool(scrap),
+                "deadlock": deadlock,
+                "finish": bool(done and not scrap and not deadlock),
+                "time": int(getattr(self.env.net, "time", 0)),
+            }
+            return np.asarray(obs, dtype=np.float32), reward, bool(done), info
+
+        # 兼容旧接口环境（TensorDict step）
+        if isinstance(getattr(self, "_cached_td", None), TensorDict):
+            td = self._cached_td.clone()
+            td["action"] = torch.tensor(int(action), dtype=torch.int64)
+            td_next = self.env.step(td)
+            nxt = td_next["next"]
+            obs = self._as_numpy(nxt["observation"], np.float32)
+            reward = float(nxt["reward"].item() if torch.is_tensor(nxt["reward"]) else nxt["reward"])
+            done = bool(nxt["terminated"].item() if torch.is_tensor(nxt["terminated"]) else nxt["terminated"])
+            mask = self._as_numpy(nxt["action_mask"], np.bool_)
+            info = {"action_mask": mask}
+            self._cached_td = nxt.clone()
+            return obs, reward, done, info
+
+        raise TypeError("Unsupported env type for FastEnvWrapper.step")
+
+    def reset(self) -> Tuple[np.ndarray, Dict[str, Any]]:
+        if isinstance(self.env, Env_PN_Single):
+            self.env.net.reset()
+            obs = np.asarray(self.env.net.get_obs(), dtype=np.float32)
+            mask = np.asarray(
+                self.env.net.get_action_mask(
+                    wait_action_start=int(self.wait_action_start),
+                    n_actions=int(self.wait_action_start + len(self.wait_durations)),
+                ),
+                dtype=np.bool_,
+            )
+            self._last_obs_np = obs
+            self._last_mask_np = mask
+            return obs, {"action_mask": mask, "time": int(self.env.net.time)}
+
+        td = self.env.reset()
+        self._cached_td = td.clone() if isinstance(td, TensorDict) else td
+        obs, mask = self._extract_obs_mask(td)
+        self._last_obs_np = obs
+        self._last_mask_np = mask
+        return obs, {"action_mask": mask}
+
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
+        obs, reward, done, info = self._fast_step_single_env(int(action))
+        self._last_obs_np = obs
+        self._last_mask_np = np.asarray(info.get("action_mask"), dtype=np.bool_)
+        if done:
+            obs, reset_info = self.reset()
+            info["terminal_observation"] = info.get("terminal_observation", None)
+            info["auto_reset"] = True
+            info["action_mask"] = reset_info["action_mask"]
+        return obs, reward, done, info
+
+
+class VectorEnv:
+    """
+    轻量级多环境并行容器（进程内，多实例）。
+    """
+
+    def __init__(self, env_fn: Callable[[], Any], n_envs: int):
+        self.n_envs = int(n_envs)
+        self.envs: List[FastEnvWrapper] = [FastEnvWrapper(env_fn()) for _ in range(self.n_envs)]
+        obs0, info0 = self.envs[0].reset()
+        self.obs_dim = int(np.asarray(obs0).shape[-1])
+        self.action_dim = int(np.asarray(info0["action_mask"]).shape[-1])
+        self._obs = np.zeros((self.n_envs, self.obs_dim), dtype=np.float32)
+        self._mask = np.zeros((self.n_envs, self.action_dim), dtype=np.bool_)
+        self._obs[0] = np.asarray(obs0, dtype=np.float32)
+        self._mask[0] = np.asarray(info0["action_mask"], dtype=np.bool_)
+        for i in range(1, self.n_envs):
+            obs_i, info_i = self.envs[i].reset()
+            self._obs[i] = np.asarray(obs_i, dtype=np.float32)
+            self._mask[i] = np.asarray(info_i["action_mask"], dtype=np.bool_)
+
+    def reset(self) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+        for i, env in enumerate(self.envs):
+            obs, info = env.reset()
+            self._obs[i] = np.asarray(obs, dtype=np.float32)
+            self._mask[i] = np.asarray(info["action_mask"], dtype=np.bool_)
+        return self._obs.copy(), {"action_mask": self._mask.copy()}
+
+    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, np.ndarray]]:
+        acts = np.asarray(actions, dtype=np.int64)
+        rewards = np.zeros((self.n_envs,), dtype=np.float32)
+        dones = np.zeros((self.n_envs,), dtype=np.bool_)
+        finish = np.zeros((self.n_envs,), dtype=np.bool_)
+        scrap = np.zeros((self.n_envs,), dtype=np.bool_)
+        deadlock = np.zeros((self.n_envs,), dtype=np.bool_)
+        time_arr = np.zeros((self.n_envs,), dtype=np.int64)
+        for i in range(self.n_envs):
+            obs_i, rew_i, done_i, info_i = self.envs[i].step(int(acts[i]))
+            self._obs[i] = np.asarray(obs_i, dtype=np.float32)
+            self._mask[i] = np.asarray(info_i["action_mask"], dtype=np.bool_)
+            rewards[i] = float(rew_i)
+            dones[i] = bool(done_i)
+            finish[i] = bool(info_i.get("finish", False))
+            scrap[i] = bool(info_i.get("scrap", False))
+            deadlock[i] = bool(info_i.get("deadlock", False))
+            time_arr[i] = int(info_i.get("time", 0))
+        return self._obs.copy(), rewards, dones, {
+            "action_mask": self._mask.copy(),
+            "finish": finish,
+            "scrap": scrap,
+            "deadlock": deadlock,
+            "time": time_arr,
+        }

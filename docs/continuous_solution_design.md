@@ -87,6 +87,13 @@ flowchart TB
 - 新增单设备 Petri 模型（1 机械手、单动作、8 腔体命名：`LP/LP_done/PM1-6`）。
 - 单设备在可视化菜单中可被真实切换，不再仅 UI 占位。
 - 单设备 `u-d-t` 子网的卸载命名由 `u_src_dst` 简化为 `u_src`，例如 `u_PM1_PM3/u_PM1_PM4 -> u_PM1`。
+- 新增 Ultra Rollout 采样链路：`FastEnvWrapper` + `VectorEnv` + `collect_rollout_ultra`，采样侧去除 TensorDict 主循环，改为纯 tensor buffer（`obs/actions/log_probs/rewards/dones/next_obs`）。
+- `train_single.py` 训练主循环固定使用 `collect_rollout_ultra`（仅保留 ultra 模式），不再保留旧 collector / blame 回填分支。
+- `train_single.py` 的 PPO 更新路径重构为 batched update：移除 `epoch + minibatch` 双层 Python 内循环，改为每个 epoch 单次大 batch forward（`index_select + contiguous`），并用 fused `masked log_softmax` 直接计算 `log_prob/entropy`（不再构造 `MaskedCategorical`）。
+- GAE 从“Python 逐步反向递推”改为 `[T, N]` 形状下的 compile 优先扫描（失败自动回退 eager），并显式支持多环境长轨迹。
+- rollout/update 完全解耦：rollout 固定 CPU；update 固定训练设备（CPU/GPU）；每个 batch 仅执行一次 CPU->GPU 数据搬运（可选 pinned memory + non_blocking）。
+- ultra collector 支持跨 batch 连续采样（不强制 reset），长 episode（1000+ steps）可保持轨迹连续性与 bootstrap 一致性。
+- 新增 `pn_single` 数值核心 `step_core_numba` / `step_core_batch_numba`，用于结构可使能判定的 JIT 加速入口。
 - 单设备路由门控改为 token 队列机制：`route_queue + route_head_idx`，仅 `t_*` 使用路由码进行放行判定。
 - **路由元数据由路径解析生成**：`construct_single.py` 中的 `parse_route(stages, buffer_names)` 从路线阶段序列（如 `[["PM1"], ["PM3","PM4"], ["PM6"]]`）解析出 `chambers`、`step_map`、`u_targets`、`release_station_aliases`、`system_entry_places`、`release_chain_by_u`、`timeline_chambers`，`ClusterTool` 不再维护硬编码分支。
 - 单设备 step 热路径优化：`_get_enable_t/get_action_mask` 增加单步结构判定缓存；`_transition_structurally_enabled` 的容量判定改为仅检查后置库所索引（不再全量扫描所有 place）。
@@ -139,8 +146,10 @@ flowchart TB
 ### Impact
 - 设备模式统一为 `--device single/cascade`，可视化 `cascade` 不再依赖 `pn.py`，统一走 `pn_single/env_single`。
 - 单设备逻辑集中在 `Continuous_model` 新文件中，便于后续独立迭代。
-- 单设备训练已支持两阶段：阶段1收集轨迹（step 不施加 release 惩罚），阶段2在开启时可执行 `blame_release_violations` 回填奖励。二次追责由 `--blame` 控制：传入 `--blame` 时在 episode 结束后执行回填；不传则不进行二次追责。
-- 训练入口 `train_single.py` 支持：`--proc-time-rand-enabled`（开启后按配置中的随机区间执行）、`--blame`（开启二次追责）。
+- 训练入口固定 ultra collector，参数收敛为：`--rollout-n-envs`（并行环境数，rollout 固定 `cpu`）。
+- `train_single.py` 当前移除 benchmark CLI 与旧训练分支（single collector / blame 回填），以减少分支复杂度并避免本地 CPU 训练卡顿路径。
+- 训练入口 `train_single.py` 保留：`--proc-time-rand-enabled`（开启后按配置中的随机区间执行）。
+- 更新阶段新增可选优化：`torch.compile`（模型与 GAE 路径）与 AMP（`bf16/fp16`，仅 CUDA 下启用）。
 - 单设备训练权重保存格式与并发训练统一：保存 `policy_module.state_dict()`（不再仅保存 backbone）。
 - 单设备动作 ID 与旧版 `u_src_dst` 不再一一对应；历史动作序列与旧策略权重需重训或显式映射迁移。
 

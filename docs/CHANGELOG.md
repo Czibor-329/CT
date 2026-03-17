@@ -2,6 +2,21 @@
 
 ## 2026-03-17
 
+### train_single 收敛为 Ultra-only 并修复 CPU 卡顿路径 (2026-03-17)
+- **What changed**：`train_single.py` 移除 `single collector`、`blame`、`benchmark` 相关训练入口与代码分支，训练主循环固定为 ultra rollout；GAE 在 CPU 上强制走 eager（仅 CUDA 尝试 compile）。
+- **Why**：简化分支可降低维护成本；同时避免本地 CPU 训练触发 compile 首次编译开销，出现“卡住/长时间无响应”。
+- **Impact**：CLI 参数收敛为 `--device/--compute-device/--checkpoint/--proc-time-rand-enabled/--rollout-n-envs`；训练行为更可预测，CPU 本地调试路径更稳定。
+
+### train_single 更新阶段极限优化（Batched PPO + 长轨迹连续采样）(2026-03-17)
+- **What changed**：`train_single.py` 更新路径改为纯 `dict[tensor]`，移除 rollout->TensorDict->tensor 往返；PPO 更新由 `epoch + minibatch` 双层循环改为“每个 epoch 单次大 batch forward”；策略更新的 `log_prob/entropy` 改为 fused `masked log_softmax` 计算（不再构造 `MaskedCategorical`）；GAE 改为 `[T,N]` 计算并采用 `torch.compile` 优先、失败自动回退 eager。
+- **Why**：训练瓶颈位于 update 阶段，原实现小 batch 多次前向与 Python 循环开销过高，GPU 利用率偏低。
+- **Impact**：形成“CPU rollout + 单次 CPU->GPU 搬运 + GPU 全并行 update”数据流；ultra/single collector 均支持跨 batch 连续轨迹（不强制 reset），长 episode（1000+ steps）训练稳定性更好。
+
+### 单设备 Ultra Rollout 高性能采样链路 (2026-03-17)
+- **What changed**：`env_single.py` 新增 `FastEnvWrapper` 与 `VectorEnv`，统一 `reset()/step()` 为纯数组接口；`train_single.py` 新增 `collect_rollout_ultra()`（纯 tensor 预分配、CPU rollout、手写 masked 采样），并将训练主循环默认 collector 切到 `ultra`（支持 `--collector ultra|single`、`--rollout-n-envs`、`--rollout-device`）；`pn_single.py` 新增 `step_core_numba/step_core_batch_numba`（纯 numpy 结构可使能核心）。
+- **Why**：原 rollout 路径依赖 TensorDict clone / dispatch 与频繁对象构造，采样吞吐显著低于 `env.step` 的 CPU 峰值。
+- **Impact**：可用 `python -m solutions.Continuous_model.train_single --benchmark-ultra --benchmark-envs 1,8` 直接对比 baseline/ultra 的 steps/sec；训练默认走 ultra 采样，若需要旧逻辑可显式传 `--collector single`，`--blame` 打开时也会自动回退 single collector。
+
 ### 单设备使能判定切到 token 扫描快路径 (2026-03-17)
 - **What changed**：`pn_single.get_enable_t` 从“逐变迁两阶段扫描”改为“先检查 `u_LP`，再扫描 token 生成 `u_*/t_*` 候选”；新增运行时 token 池与变迁索引缓存；`_check_scrap` 改为按 token 剩余时间判定（`remaining < -P_Residual_time`）。
 - **Why**：`get_enable_t` 是 `step` 热路径，逐变迁做重复结构性判断与目标解析开销较高；token 扫描在单臂场景下可减少无效判定。

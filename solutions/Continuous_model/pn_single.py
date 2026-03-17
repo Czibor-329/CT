@@ -15,6 +15,11 @@ from solutions.Continuous_model.helper_function import (
 )
 
 import numpy as np
+try:
+    from numba import njit, prange
+except Exception:  # pragma: no cover - numba 可选依赖
+    njit = None
+    prange = range
 
 from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.construct import BasedToken
@@ -45,6 +50,91 @@ REASON_DESC: Dict[str, str] = {
     "has_ready_wafer_restrict_wait": "有待取晶圆，仅允许短等待",
     "takt_release_limit": "节拍限制：距上次发片间隔未达当前周期节拍",
 }
+
+
+def _step_core_numpy(
+    pre: np.ndarray,
+    m: np.ndarray,
+    k: np.ndarray,
+    pst: np.ndarray,
+    t_idx: int,
+) -> bool:
+    """
+    纯 numpy 核心判定：变迁结构性可使能（不含业务路由/清洗约束）。
+    """
+    if int(t_idx) < 0 or int(t_idx) >= pre.shape[1]:
+        return False
+    p_count = pre.shape[0]
+    for p in range(p_count):
+        need = pre[p, t_idx]
+        if need > 0 and m[p] < need:
+            return False
+    for p in range(p_count):
+        if pst[p, t_idx] > 0 and m[p] >= k[p]:
+            return False
+    return True
+
+
+if njit is not None:
+    @njit(cache=True, fastmath=True)
+    def step_core_numba(
+        pre: np.ndarray,
+        m: np.ndarray,
+        k: np.ndarray,
+        pst: np.ndarray,
+        t_idx: int,
+    ) -> bool:
+        if t_idx < 0 or t_idx >= pre.shape[1]:
+            return False
+        p_count = pre.shape[0]
+        for p in range(p_count):
+            need = pre[p, t_idx]
+            if need > 0 and m[p] < need:
+                return False
+        for p in range(p_count):
+            if pst[p, t_idx] > 0 and m[p] >= k[p]:
+                return False
+        return True
+
+    @njit(cache=True, fastmath=True, parallel=True)
+    def step_core_batch_numba(
+        pre: np.ndarray,
+        m: np.ndarray,
+        k: np.ndarray,
+        pst: np.ndarray,
+        t_indices: np.ndarray,
+        out_mask: np.ndarray,
+    ) -> None:
+        for i in prange(t_indices.shape[0]):
+            t_idx = int(t_indices[i])
+            if t_idx < 0 or t_idx >= pre.shape[1]:
+                out_mask[i] = False
+                continue
+            ok = True
+            for p in range(pre.shape[0]):
+                need = pre[p, t_idx]
+                if need > 0 and m[p] < need:
+                    ok = False
+                    break
+            if ok:
+                for p in range(pre.shape[0]):
+                    if pst[p, t_idx] > 0 and m[p] >= k[p]:
+                        ok = False
+                        break
+            out_mask[i] = ok
+else:
+    step_core_numba = _step_core_numpy
+
+    def step_core_batch_numba(
+        pre: np.ndarray,
+        m: np.ndarray,
+        k: np.ndarray,
+        pst: np.ndarray,
+        t_indices: np.ndarray,
+        out_mask: np.ndarray,
+    ) -> None:
+        for i in range(int(t_indices.shape[0])):
+            out_mask[i] = _step_core_numpy(pre, m, k, pst, int(t_indices[i]))
 
 
 class ClusterTool:
@@ -970,6 +1060,11 @@ class ClusterTool:
 
     def _transition_structurally_enabled(self, t_idx: int) -> bool:
         m = self.m; pre = self.pre; net = self.net; k = self.k
+        # 数值核心优先走 numba（可选），失败时退回原路径。
+        try:
+            return bool(step_core_numba(pre, m, k, self.pst, int(t_idx)))
+        except Exception:
+            pass
         pre_idx = self._pre_place_indices[t_idx]
         n = pre_idx.size
         if n == 1:
