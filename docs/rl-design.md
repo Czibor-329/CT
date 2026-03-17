@@ -154,6 +154,26 @@ python -m solutions.PPO.run_ppo --config data/ppo_configs/custom/my_config.json
 python -m solutions.PPO.run_ppo --checkpoint solutions/PPO/saved_models/CT_ppo_best.pt
 ```
 
+### 训练时间评估指标
+
+`train_single.py` 在每个 batch 和训练结束时输出以下时间指标：
+
+**Batch 级别（每轮打印）**：
+- `rollout`: rollout 采样耗时（秒）
+- `update`: PPO 参数更新耗时（秒）
+- `steps/s`: 环境交互速度（env steps / rollout 时间）
+- `ETA`: 基于最近 10 个 batch 的滑动平均估算剩余时间
+
+**训练结束汇总**：
+- 总训练 wall-clock 时间
+- 平均 batch 耗时（rollout vs update 占比百分比）
+- 平均 steps/sec
+
+**Step 分段 Profiling**（`pn_single.py`）：
+- 默认开启（`_profiling_enabled=True`），训练和评估模式均有效
+- 分段：`get_enable_t` / `_fire` / `build_obs` / `advance_and_reward` / `next_event_delta` / `other`
+- 训练结束后自动输出各分段累计耗时、平均耗时和占比
+
 ### 核心文件
 
 | 文件                                      | 功能              | 关键类/函数                                      |

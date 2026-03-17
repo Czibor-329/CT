@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
+from time import perf_counter
 
 import torch
 import torch.nn as nn
@@ -34,30 +35,6 @@ class SingleActionPolicyModule(nn.Module):
         return self.backbone(observation_f)
 
 
-def _extract_step_result(td_next):
-    if "next" in td_next.keys():
-        reward = td_next["next", "reward"]
-        terminated = td_next["next", "terminated"]
-        finish = td_next["next", "finish"] if "finish" in td_next["next"].keys() else td_next["next", "terminated"]
-        scrap = td_next["next", "scrap"] if "scrap" in td_next["next"].keys() else torch.tensor(False)
-        deadlock = td_next["next", "deadlock"] if "deadlock" in td_next["next"].keys() else torch.tensor(False)
-        time_t = td_next["next", "time"]
-        next_obs = td_next["next", "observation"]
-    else:
-        reward = td_next["reward"]
-        terminated = td_next["terminated"]
-        finish = td_next.get("finish", td_next["terminated"])
-        scrap = td_next.get("scrap", torch.tensor(False))
-        deadlock = td_next.get("deadlock", torch.tensor(False))
-        time_t = td_next["time"]
-        next_obs = td_next["observation"]
-    return reward, terminated, finish, scrap, deadlock, time_t, next_obs
-
-
-def _to_next_state(td_next):
-    return td_next["next"].clone() if "next" in td_next.keys() else td_next.clone()
-
-
 def collect_rollout_single(
     env: Env_PN_Single,
     policy_backbone: MaskedPolicyHead,
@@ -66,65 +43,80 @@ def collect_rollout_single(
     blame_enabled: bool = False,
 ):
     """
-    两阶段采样：
-    1) 收集轨迹（step 不施加 release 惩罚）
-    2) 若 blame_enabled，episode 结束后 blame_release_violations 回填奖励
+    Rollout 采样（预分配 tensor 版本）。
+    blame_enabled=False 时跳过 fire_log_ranges 追踪。
     """
-    data = {
-        "observation": [],
-        "observation_f": [],
-        "action_mask": [],
-        "action": [],
-        "log_prob": [],
-        "reward": [],
-        "done": [],
-        "finish": [],
-        "scrap": [],
-        "deadlock": [],
-        "time": [],
-        "next_observation": [],
-        "next_observation_f": [],
-    }
+    obs_dim = env.observation_spec["observation"].shape[0]
+    n_act = env.n_actions
+    on_cpu = (device == "cpu")
 
-    fire_log_ranges = []
+    obs_buf = torch.zeros(n_steps, obs_dim, dtype=torch.float32)
+    mask_buf = torch.zeros(n_steps, n_act, dtype=torch.bool)
+    action_buf = torch.zeros(n_steps, dtype=torch.int64)
+    log_prob_buf = torch.zeros(n_steps, dtype=torch.float32)
+    reward_buf = torch.zeros(n_steps, 1, dtype=torch.float32)
+    done_buf = torch.zeros(n_steps, dtype=torch.bool)
+    finish_buf = torch.zeros(n_steps, dtype=torch.bool)
+    scrap_buf = torch.zeros(n_steps, dtype=torch.bool)
+    deadlock_buf = torch.zeros(n_steps, dtype=torch.bool)
+    time_buf = torch.zeros(n_steps, 1, dtype=torch.int64)
+    next_obs_buf = torch.zeros(n_steps, obs_dim, dtype=torch.float32)
+
+    _FALSE = torch.tensor(False)
+    fire_log_ranges: list | None = [] if blame_enabled else None
     td = env.reset()
     second_pass_events = 0
 
-    for _ in range(n_steps):
+    for i in range(n_steps):
         obs = td["observation"].unsqueeze(0).to(device)
-        obs_f = obs.float()
         mask = td["action_mask"].unsqueeze(0).to(device)
 
         with torch.no_grad():
-            logits = policy_backbone(obs_f)
+            logits = policy_backbone(obs.float())
             dist = MaskedCategorical(logits=logits, mask=mask.bool())
             action = dist.sample()
             log_prob = dist.log_prob(action)
 
-        data["observation"].append(td["observation"])
-        data["observation_f"].append(td["observation"].float())
-        data["action_mask"].append(td["action_mask"])
-        data["action"].append(action.squeeze(0).cpu())
-        data["log_prob"].append(log_prob.squeeze(0).cpu())
+        obs_buf[i] = td["observation"]
+        mask_buf[i] = td["action_mask"]
+        a = action.squeeze(0)
+        lp = log_prob.squeeze(0)
+        if not on_cpu:
+            a = a.cpu()
+            lp = lp.cpu()
+        action_buf[i] = a
+        log_prob_buf[i] = lp
 
-        fire_start = len(env.net.fire_log)
+        if blame_enabled:
+            fire_start = len(env.net.fire_log)
 
         step_td = td.clone()
-        step_td["action"] = action.squeeze(0).cpu()
+        step_td["action"] = a
         td_next = env.step(step_td)
 
-        fire_end = len(env.net.fire_log)
-        fire_log_ranges.append((fire_start, fire_end))
+        if blame_enabled:
+            fire_end = len(env.net.fire_log)
+            fire_log_ranges.append((fire_start, fire_end))
 
-        reward, terminated, finish, scrap, deadlock, time_t, next_obs = _extract_step_result(td_next)
-        data["reward"].append(reward.cpu())
-        data["done"].append(terminated.cpu())
-        data["finish"].append(finish.cpu())
-        data["scrap"].append(scrap.cpu())
-        data["deadlock"].append(deadlock.cpu())
-        data["time"].append(time_t.cpu())
-        data["next_observation"].append(next_obs.cpu())
-        data["next_observation_f"].append(next_obs.float().cpu())
+        nxt = td_next["next"]
+        reward = nxt["reward"]
+        terminated = nxt["terminated"]
+        if on_cpu:
+            reward_buf[i] = reward
+            done_buf[i] = terminated
+            finish_buf[i] = nxt.get("finish", terminated)
+            scrap_buf[i] = nxt.get("scrap", _FALSE)
+            deadlock_buf[i] = nxt.get("deadlock", _FALSE)
+            time_buf[i] = nxt["time"]
+            next_obs_buf[i] = nxt["observation"]
+        else:
+            reward_buf[i] = reward.cpu()
+            done_buf[i] = terminated.cpu()
+            finish_buf[i] = nxt.get("finish", terminated).cpu()
+            scrap_buf[i] = nxt.get("scrap", _FALSE).cpu()
+            deadlock_buf[i] = nxt.get("deadlock", _FALSE).cpu()
+            time_buf[i] = nxt["time"].cpu()
+            next_obs_buf[i] = nxt["observation"].cpu()
 
         if bool(terminated.item() if hasattr(terminated, "item") else terminated):
             if blame_enabled:
@@ -133,15 +125,29 @@ def collect_rollout_single(
                     for fire_idx, penalty in blame.items():
                         for step_idx, (fstart, fend) in enumerate(fire_log_ranges):
                             if fstart <= fire_idx < fend:
-                                data["reward"][step_idx] = data["reward"][step_idx] - float(penalty)
+                                reward_buf[step_idx] -= float(penalty)
                                 second_pass_events += 1
                                 break
+                fire_log_ranges.clear()
             td = env.reset()
-            fire_log_ranges = []
         else:
-            td = _to_next_state(td_next)
+            td = nxt.clone()
 
-    rollout = TensorDict({k: torch.stack(v) for k, v in data.items()}, batch_size=[n_steps])
+    rollout = TensorDict({
+        "observation": obs_buf,
+        "observation_f": obs_buf.float(),
+        "action_mask": mask_buf,
+        "action": action_buf,
+        "log_prob": log_prob_buf,
+        "reward": reward_buf,
+        "done": done_buf,
+        "finish": finish_buf,
+        "scrap": scrap_buf,
+        "deadlock": deadlock_buf,
+        "time": time_buf,
+        "next_observation": next_obs_buf,
+        "next_observation_f": next_obs_buf.float(),
+    }, batch_size=[n_steps])
     return rollout, second_pass_events
 
 
@@ -211,11 +217,18 @@ def train_single(
     best_reward = float("-inf")
     log = defaultdict(list)
 
+    training_start = perf_counter()
+    batch_time_window: deque[float] = deque(maxlen=10)
+
     with set_exploration_type(ExplorationType.RANDOM):
         for batch_idx in range(config.total_batch):
+            t_batch = perf_counter()
+
             rollout, second_pass_events = collect_rollout_single(
                 env, policy_backbone, config.frames_per_batch, device=device, blame_enabled=blame_enabled
             )
+            t_rollout_end = perf_counter()
+
             rollout = rollout.to(device)
 
             with torch.no_grad():
@@ -267,6 +280,17 @@ def train_single(
                     nn.utils.clip_grad_norm_(list(policy_backbone.parameters()) + list(value_net.parameters()), max_norm=1.0)
                     optim.step()
 
+            t_update_end = perf_counter()
+
+            rollout_time = t_rollout_end - t_batch
+            update_time = t_update_end - t_rollout_end
+            batch_time = t_update_end - t_batch
+            steps_per_sec = config.frames_per_batch / rollout_time if rollout_time > 0 else 0.0
+            batch_time_window.append(batch_time)
+            remaining = config.total_batch - (batch_idx + 1)
+            eta_s = remaining * (sum(batch_time_window) / len(batch_time_window))
+            eta_str = f"{eta_s / 60:.1f}m" if eta_s >= 60 else f"{eta_s:.0f}s"
+
             ep_reward = rollout["reward"].sum().item()
             finish_count = rollout["finish"].sum().item()
             scrap_count = rollout["scrap"].sum().item()
@@ -285,11 +309,16 @@ def train_single(
             log["deadlock"].append(deadlock_count)
             log["makespan"].append(avg_makespan)
             log["second_pass_events"].append(second_pass_events)
+            log["rollout_time"].append(rollout_time)
+            log["update_time"].append(update_time)
+            log["steps_per_sec"].append(steps_per_sec)
 
             print(
                 f"batch {batch_idx+1:04d} | reward={ep_reward:.2f} | finish={int(finish_count)} "
                 f"| scrap={int(scrap_count)} | deadlock={int(deadlock_count)} "
-                f"| makespan={avg_makespan:.1f} | second_pass={second_pass_events}"
+                f"| makespan={avg_makespan:.1f}"
+                f" | rollout={rollout_time:.2f}s update={update_time:.2f}s"
+                f" | steps/s={steps_per_sec:.0f} ETA={eta_str}"
             )
 
             if ep_reward > best_reward and finish_count > 0:
@@ -299,7 +328,28 @@ def train_single(
                 torch.save(policy_module.state_dict(), backup_path)
                 print(f"  -> New best model! reward={ep_reward:.2f}")
 
-    print(f"\nTraining done. Best reward: {best_reward:.2f}")
+    total_training_time = perf_counter() - training_start
+    total_steps = config.total_batch * config.frames_per_batch
+    total_rollout = sum(log["rollout_time"])
+    total_update = sum(log["update_time"])
+    avg_rollout = total_rollout / len(log["rollout_time"]) if log["rollout_time"] else 0.0
+    avg_update = total_update / len(log["update_time"]) if log["update_time"] else 0.0
+    avg_batch = avg_rollout + avg_update
+    overall_sps = total_steps / total_rollout if total_rollout > 0 else 0.0
+    rollout_pct = (avg_rollout / avg_batch * 100) if avg_batch > 0 else 0
+    update_pct = (avg_update / avg_batch * 100) if avg_batch > 0 else 0
+
+    print(f"\n[Training Summary]")
+    print(f"  总训练时间: {total_training_time:.1f}s ({total_training_time / 60:.1f}m)")
+    print(f"  总 env steps: {total_steps}")
+    print(
+        f"  平均 batch: {avg_batch:.2f}s "
+        f"(rollout={avg_rollout:.2f}s [{rollout_pct:.0f}%] "
+        f"| update={avg_update:.2f}s [{update_pct:.0f}%])"
+    )
+    print(f"  平均 steps/sec: {overall_sps:.0f}")
+    print(f"  Best reward: {best_reward:.2f}")
+
     step_profile = env.net.get_step_profile_summary()
     if int(step_profile.get("count", 0)) > 0:
         print(

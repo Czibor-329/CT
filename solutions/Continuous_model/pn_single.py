@@ -245,6 +245,7 @@ class ClusterTool:
         self._last_u_LP_fire_time: int = 0
         self._u_LP_release_count: int = 0
         self._training = True
+        self._profiling_enabled = True
         self._step_profile = {
             "count": 0,
             "total_s": 0.0,
@@ -288,7 +289,7 @@ class ClusterTool:
         单设备一步推进入口。
         返回：(done, reward_result, scrap, action_mask, obs)
         """
-        _pf = not self._training
+        _pf = self._profiling_enabled
         SCRAPE = False
         if _pf:
             step_start = perf_counter()

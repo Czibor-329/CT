@@ -15,6 +15,10 @@ from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.pn_single import ClusterTool
 from pathlib import Path
 
+_TRUE_T = torch.tensor(True)
+_FALSE_T = torch.tensor(False)
+
+
 class Env_PN_Single(EnvBase):
     metadata = {"render.modes": ["human", "rgb_array"], "reder_fps": 30}
     batch_locked = False
@@ -71,6 +75,8 @@ class Env_PN_Single(EnvBase):
         self._make_spec()
         self._last_action_enable_info: dict = {}
         self._last_reward_detail: dict = {}
+        self._out_time = torch.zeros(1, dtype=torch.int64)
+        self._out_reward = torch.zeros(1, dtype=torch.float32)
         if seed is None:
             seed = torch.empty((), dtype=torch.int64).random_().item()
         self.set_seed(seed)
@@ -131,11 +137,12 @@ class Env_PN_Single(EnvBase):
         )
 
     def _build_state_td(self, obs, action_mask, time):
+        self._out_time[0] = time
         return TensorDict(
             {
-                "observation": torch.as_tensor(obs, dtype=torch.float32),
-                "action_mask": torch.as_tensor(action_mask, dtype=torch.bool),
-                "time": torch.tensor([time], dtype=torch.int64),
+                "observation": torch.from_numpy(obs),
+                "action_mask": torch.from_numpy(action_mask),
+                "time": self._out_time.clone(),
             }
         )
 
@@ -183,16 +190,18 @@ class Env_PN_Single(EnvBase):
                     detail[k] = v
             self._last_reward_detail = detail
 
+        self._out_time[0] = self.net.time
+        self._out_reward[0] = reward
         out = TensorDict(
             {
-                "observation": torch.as_tensor(obs, dtype=torch.float32),
-                "action_mask": torch.as_tensor(action_mask, dtype=torch.bool),
-                "time": torch.tensor([self.net.time], dtype=torch.int64),
-                "finish": torch.tensor(bool(done and not scrap and not deadlock), dtype=torch.bool),
-                "scrap": torch.tensor(bool(scrap), dtype=torch.bool),
-                "deadlock": torch.tensor(bool(deadlock), dtype=torch.bool),
-                "reward": torch.tensor([float(reward)], dtype=torch.float32),
-                "terminated": torch.tensor(bool(done), dtype=torch.bool),
+                "observation": torch.from_numpy(obs),
+                "action_mask": torch.from_numpy(action_mask),
+                "time": self._out_time.clone(),
+                "finish": _TRUE_T if (done and not scrap and not deadlock) else _FALSE_T,
+                "scrap": _TRUE_T if scrap else _FALSE_T,
+                "deadlock": _TRUE_T if deadlock else _FALSE_T,
+                "reward": self._out_reward.clone(),
+                "terminated": _TRUE_T if done else _FALSE_T,
             },
             batch_size=[],
         )
