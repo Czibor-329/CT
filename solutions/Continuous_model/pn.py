@@ -120,6 +120,18 @@ class Place:
         """返回观测向量维度；子类继承即可，基于 get_obs 长度。"""
         return len(self.get_obs())
 
+    def write_obs(self, buffer: np.ndarray, offset: int) -> int:
+        """
+        将本库所观测原地写入预分配 buffer。
+        返回写入长度；默认走 get_obs 兼容路径。
+        """
+        values = self.get_obs()
+        length = len(values)
+        if length <= 0:
+            return 0
+        buffer[offset: offset + length] = values
+        return length
+
 
 # ---------- Place 子类（单设备观测用）----------
 # SR=Source, TM=Transport, PM=Process Module, LL=Load Lock
@@ -130,13 +142,29 @@ class SR(Place):
     def __init__(self, name: str, capacity: int, processing_time: int, type: int = 3, n_wafer: int = 1, **kwargs):
         super().__init__(name=name, capacity=capacity, processing_time=processing_time, type=type, **kwargs)
         self._n_wafer = max(1, n_wafer)
+        self._inv_n_wafer = 1.0 / float(self._n_wafer)
 
     def get_obs(self) -> List[float]:
-        if self.name == "LP_done":
+        obs_dim = self.get_obs_dim()
+        if obs_dim == 0:
             return []
-        denom = max(1.0, float(self._n_wafer))
-        remaining_norm = float(np.clip(len(self.tokens) / denom, 0.0, 1.0))
-        return [remaining_norm]
+        out = np.zeros(obs_dim, dtype=np.float32)
+        self.write_obs(out, 0)
+        return out.tolist()
+
+    def get_obs_dim(self) -> int:
+        return 0 if self.name == "LP_done" else 1
+
+    def write_obs(self, buffer: np.ndarray, offset: int) -> int:
+        if self.name == "LP_done":
+            return 0
+        remaining_norm = float(len(self.tokens)) * self._inv_n_wafer
+        if remaining_norm < 0.0:
+            remaining_norm = 0.0
+        elif remaining_norm > 1.0:
+            remaining_norm = 1.0
+        buffer[offset] = remaining_norm
+        return 1
 
     def clone(self) -> "SR":
         cloned = SR(
@@ -174,29 +202,54 @@ class TM(Place):
         self._D_Residual_time = max(1, D_Residual_time)
         self._target_onehot_map = target_onehot_map or {}
         self._onehot_dim = max(1, onehot_dim)
+        self._obs_dim = 4 + self._onehot_dim
 
     def get_obs(self) -> List[float]:
-        penalty_time = max(1.0, float(self._D_Residual_time))
-        dwell_time = max(1.0, float(getattr(self, "processing_time", 5)))
-        if len(self.tokens) == 0:
-            time_feat = [0.0, 0.0, 0.0, 1.0]
-            onehot = [0.0] * self._onehot_dim
-            return time_feat + onehot
-        stay_time = float(getattr(self.head(), "stay_time", 0))
-        any_complete = 1.0 if stay_time >= dwell_time else 0.0
-        any_over_long = 1.0 if stay_time > penalty_time else 0.0
+        out = np.zeros(self._obs_dim, dtype=np.float32)
+        self.write_obs(out, 0)
+        return out.tolist()
+
+    def get_obs_dim(self) -> int:
+        return self._obs_dim
+
+    def write_obs(self, buffer: np.ndarray, offset: int) -> int:
+        end = offset + self._obs_dim
+        buffer[offset:end] = 0.0
+        penalty_time = float(self._D_Residual_time)
+        dwell_time = float(self.processing_time if self.processing_time > 0 else 1.0)
+
+        token_count = len(self.tokens)
+        if token_count == 0:
+            buffer[offset + 3] = 1.0
+            return self._obs_dim
+
+        head = self.tokens[0]
+        stay_time = float(getattr(head, "stay_time", 0.0))
+        buffer[offset] = 1.0 if stay_time >= dwell_time else 0.0
+        buffer[offset + 1] = 1.0 if stay_time > penalty_time else 0.0
+
         tm_norm_denom = max(dwell_time, penalty_time) * 2.0
-        max_stay_norm = float(np.clip(stay_time / tm_norm_denom, 0.0, 1.0))
-        distance_to_penalty = max(0.0, penalty_time - stay_time)
-        min_distance_norm = float(np.clip(distance_to_penalty / penalty_time, 0.0, 1.0))
-        time_feat = [any_complete, any_over_long, max_stay_norm, min_distance_norm]
-        onehot = [0.0] * self._onehot_dim
-        target = getattr(self.head(), "_target_place", None)
-        if target is not None and target in self._target_onehot_map:
-            idx = self._target_onehot_map[target]
+        max_stay_norm = stay_time / tm_norm_denom if tm_norm_denom > 0.0 else 0.0
+        if max_stay_norm < 0.0:
+            max_stay_norm = 0.0
+        elif max_stay_norm > 1.0:
+            max_stay_norm = 1.0
+        buffer[offset + 2] = max_stay_norm
+
+        distance_to_penalty = penalty_time - stay_time
+        if distance_to_penalty < 0.0:
+            distance_to_penalty = 0.0
+        min_distance_norm = distance_to_penalty / penalty_time
+        if min_distance_norm > 1.0:
+            min_distance_norm = 1.0
+        buffer[offset + 3] = min_distance_norm
+
+        target = getattr(head, "_target_place", None)
+        if target is not None:
+            idx = self._target_onehot_map.get(target, -1)
             if 0 <= idx < self._onehot_dim:
-                onehot[idx] = 1.0
-        return time_feat + onehot
+                buffer[offset + 4 + idx] = 1.0
+        return self._obs_dim
 
     def clone(self) -> "TM":
         cloned = TM(
@@ -232,45 +285,77 @@ class PM(Place):
         self._cleaning_duration = max(1, cleaning_duration)
         self._cleaning_trigger_wafers = max(1, cleaning_trigger_wafers)
         self._scrap_clip_threshold = max(1.0, scrap_clip_threshold)
+        self._inv_cleaning_duration = 1.0 / float(self._cleaning_duration)
+        self._inv_cleaning_trigger = 1.0 / float(self._cleaning_trigger_wafers)
+        self._inv_scrap_clip = 1.0 / float(self._scrap_clip_threshold)
+        self._obs_dim = 9
 
     def get_obs(self) -> List[float]:
+        out = np.zeros(self._obs_dim, dtype=np.float32)
+        self.write_obs(out, 0)
+        return out.tolist()
+
+    def get_obs_dim(self) -> int:
+        return self._obs_dim
+
+    def write_obs(self, buffer: np.ndarray, offset: int) -> int:
+        end = offset + self._obs_dim
+        buffer[offset:end] = 0.0
+
         has_wafer = len(self.tokens) > 0
-        proc_time = max(1.0, float(getattr(self, "processing_time", 0)))
-        p_residual = max(1.0, float(self._P_Residual_time))
-        occupied = 1.0 if has_wafer else 0.0
-        processing = 0.0
-        done_waiting_pick = 0.0
-        remaining_process_time_norm = 0.0
-        wafer_stay_time_norm = 0.0
-        wafer_time_to_scrap_norm = 0.0
+        buffer[offset] = 1.0 if has_wafer else 0.0
+        proc_time = float(self.processing_time if self.processing_time > 0 else 1.0)
+        p_residual = float(self._P_Residual_time)
+
         if has_wafer:
-            stay_time = float(getattr(self.head(), "stay_time", 0))
-            processing = 1.0 if stay_time < proc_time else 0.0
-            done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
-            remaining_proc = max(0.0, proc_time - stay_time)
-            remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
-            wafer_stay_time_norm = float(np.clip(stay_time / proc_time, 0.0, 1.0))
-            time_to_scrap = max(0.0, proc_time + p_residual - stay_time)
-            wafer_time_to_scrap_norm = float(
-                np.clip(time_to_scrap, 0.0, self._scrap_clip_threshold) / self._scrap_clip_threshold
-            )
-        is_cleaning = 1.0 if bool(getattr(self, "is_cleaning", False)) else 0.0
-        clean_remaining = max(0.0, float(getattr(self, "cleaning_remaining", 0)))
-        clean_remaining_time_norm = float(np.clip(clean_remaining / self._cleaning_duration, 0.0, 1.0))
-        processed_count = max(0.0, float(getattr(self, "processed_wafer_count", 0)))
-        remaining_runs = max(0.0, self._cleaning_trigger_wafers - processed_count)
-        remaining_runs_before_clean_norm = float(np.clip(remaining_runs / self._cleaning_trigger_wafers, 0.0, 1.0))
-        return [
-            occupied,
-            processing,
-            done_waiting_pick,
-            remaining_process_time_norm,
-            wafer_stay_time_norm,
-            wafer_time_to_scrap_norm,
-            is_cleaning,
-            clean_remaining_time_norm,
-            remaining_runs_before_clean_norm,
-        ]
+            head = self.tokens[0]
+            stay_time = float(getattr(head, "stay_time", 0.0))
+            is_processing = stay_time < proc_time
+            buffer[offset + 1] = 1.0 if is_processing else 0.0
+            buffer[offset + 2] = 0.0 if is_processing else 1.0
+
+            remaining_proc = proc_time - stay_time
+            if remaining_proc < 0.0:
+                remaining_proc = 0.0
+            remaining_process_time_norm = remaining_proc / proc_time
+            if remaining_process_time_norm > 1.0:
+                remaining_process_time_norm = 1.0
+            buffer[offset + 3] = remaining_process_time_norm
+
+            wafer_stay_time_norm = stay_time / proc_time
+            if wafer_stay_time_norm < 0.0:
+                wafer_stay_time_norm = 0.0
+            elif wafer_stay_time_norm > 1.0:
+                wafer_stay_time_norm = 1.0
+            buffer[offset + 4] = wafer_stay_time_norm
+
+            time_to_scrap = proc_time + p_residual - stay_time
+            if time_to_scrap < 0.0:
+                time_to_scrap = 0.0
+            elif time_to_scrap > self._scrap_clip_threshold:
+                time_to_scrap = self._scrap_clip_threshold
+            buffer[offset + 5] = time_to_scrap * self._inv_scrap_clip
+
+        buffer[offset + 6] = 1.0 if bool(getattr(self, "is_cleaning", False)) else 0.0
+        clean_remaining = float(getattr(self, "cleaning_remaining", 0.0))
+        if clean_remaining < 0.0:
+            clean_remaining = 0.0
+        clean_remaining_time_norm = clean_remaining * self._inv_cleaning_duration
+        if clean_remaining_time_norm > 1.0:
+            clean_remaining_time_norm = 1.0
+        buffer[offset + 7] = clean_remaining_time_norm
+
+        processed_count = float(getattr(self, "processed_wafer_count", 0.0))
+        if processed_count < 0.0:
+            processed_count = 0.0
+        remaining_runs = float(self._cleaning_trigger_wafers) - processed_count
+        if remaining_runs < 0.0:
+            remaining_runs = 0.0
+        remaining_runs_norm = remaining_runs * self._inv_cleaning_trigger
+        if remaining_runs_norm > 1.0:
+            remaining_runs_norm = 1.0
+        buffer[offset + 8] = remaining_runs_norm
+        return self._obs_dim
 
     def clone(self) -> "PM":
         cloned = PM(
@@ -297,23 +382,38 @@ class PM(Place):
 class LL(Place):
     """Load Lock 缓冲（LLC/LLD），返回 4 维特征。"""
     def get_obs(self) -> List[float]:
+        out = np.zeros(self.get_obs_dim(), dtype=np.float32)
+        self.write_obs(out, 0)
+        return out.tolist()
+
+    def get_obs_dim(self) -> int:
+        return 4
+
+    def write_obs(self, buffer: np.ndarray, offset: int) -> int:
+        buffer[offset: offset + 4] = 0.0
         has_wafer = len(self.tokens) > 0
-        raw_proc_time = float(getattr(self, "processing_time", 0))
-        proc_time = max(1.0, raw_proc_time)
-        occupied = 1.0 if has_wafer else 0.0
-        processing = 0.0
-        done_waiting_pick = 0.0
-        remaining_process_time_norm = 0.0
-        if has_wafer:
-            stay_time = float(getattr(self.head(), "stay_time", 0))
-            if raw_proc_time <= 0.0:
-                done_waiting_pick = 1.0
-            else:
-                processing = 1.0 if stay_time < proc_time else 0.0
-                done_waiting_pick = 1.0 if stay_time >= proc_time else 0.0
-                remaining_proc = max(0.0, proc_time - stay_time)
-                remaining_process_time_norm = float(np.clip(remaining_proc / proc_time, 0.0, 1.0))
-        return [occupied, processing, done_waiting_pick, remaining_process_time_norm]
+        buffer[offset] = 1.0 if has_wafer else 0.0
+        if not has_wafer:
+            return 4
+
+        raw_proc_time = float(self.processing_time)
+        if raw_proc_time <= 0.0:
+            buffer[offset + 2] = 1.0
+            return 4
+
+        proc_time = raw_proc_time
+        stay_time = float(getattr(self.tokens[0], "stay_time", 0.0))
+        is_processing = stay_time < proc_time
+        buffer[offset + 1] = 1.0 if is_processing else 0.0
+        buffer[offset + 2] = 0.0 if is_processing else 1.0
+        remaining_proc = proc_time - stay_time
+        if remaining_proc < 0.0:
+            remaining_proc = 0.0
+        remaining_norm = remaining_proc / proc_time
+        if remaining_norm > 1.0:
+            remaining_norm = 1.0
+        buffer[offset + 3] = remaining_norm
+        return 4
 
     def clone(self) -> "LL":
         cloned = LL(

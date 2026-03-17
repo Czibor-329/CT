@@ -254,6 +254,16 @@ class ClusterTool:
             "reward_s": 0.0,
             "other_s": 0.0,
         }
+        self._place_by_name: Dict[str, Place] = {}
+        self._obs_place_names: List[str] = []
+        self._obs_places: List[Place] = []
+        self._obs_offsets: List[int] = []
+        self._obs_specs: List[Dict[str, Any]] = []
+        self._obs_dim: int = 0
+        self._obs_buffer: np.ndarray = np.zeros(0, dtype=np.float32)
+        self._obs_return_copy: bool = True
+        self._rebuild_place_cache()
+        self._init_obs_cache()
         self._build_transition_index()
         self._rebuild_token_pool()
 
@@ -443,6 +453,8 @@ class ClusterTool:
     def reset(self):
         self.marks = self._clone_marks(self.ori_marks)
         self._refresh_episode_proc_time()
+        self._rebuild_place_cache()
+        self._init_obs_cache()
         self.time = 0
         self.done_count = 0
         self.scrap_count = 0
@@ -500,20 +512,40 @@ class ClusterTool:
             chambers = ["PM1", "PM3", "PM4"]
         return ["LP"] + tm_names + chambers
 
+    def _rebuild_place_cache(self) -> None:
+        self._place_by_name = {p.name: p for p in self.marks}
+
+    def _init_obs_cache(self) -> None:
+        order = self._get_obs_place_order()
+        obs_names = [name for name in order if name in self._place_by_name]
+        obs_places = [self._place_by_name[name] for name in obs_names]
+        offsets: List[int] = []
+        specs: List[Dict[str, Any]] = []
+        cursor = 0
+        for place in obs_places:
+            dim = int(place.get_obs_dim())
+            offsets.append(cursor)
+            specs.append({"name": place.name, "offset": cursor, "dim": dim})
+            cursor += dim
+        self._obs_place_names = obs_names
+        self._obs_places = obs_places
+        self._obs_offsets = offsets
+        self._obs_specs = specs
+        self._obs_dim = int(cursor)
+        self._obs_buffer = np.zeros(self._obs_dim, dtype=np.float32)
+
     def get_obs(self) -> np.ndarray:
-        obs: List[float] = []
-        for name in self._get_obs_place_order():
-            if name not in self.id2p_name:
-                continue
-            obs.extend(self._get_place(name).get_obs())
-        return np.array(obs, dtype=np.float32)
+        if self._obs_dim == 0:
+            return np.zeros(0, dtype=np.float32)
+        buffer = self._obs_buffer
+        for place, offset in zip(self._obs_places, self._obs_offsets):
+            place.write_obs(buffer, offset)
+        if self._obs_return_copy:
+            return buffer.copy()
+        return buffer
 
     def get_obs_dim(self) -> int:
-        return sum(
-            self._get_place(name).get_obs_dim()
-            for name in self._get_obs_place_order()
-            if name in self.id2p_name
-        )
+        return int(self._obs_dim)
 
     def _record_step_profile(
         self,
@@ -1084,10 +1116,10 @@ class ClusterTool:
         return cloned
 
     def _get_place(self, name: str) -> Place:
-        for p in self.marks:
-            if p.name == name:
-                return p
-        raise KeyError(f"unknown place: {name}")
+        place = self._place_by_name.get(name)
+        if place is None:
+            raise KeyError(f"unknown place: {name}")
+        return place
 
     def _get_place_index(self, name: str) -> int:
         return self.id2p_name.index(name)

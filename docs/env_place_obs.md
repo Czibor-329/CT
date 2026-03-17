@@ -95,6 +95,22 @@
 
 特征由 Place 子类（SR、TM、PM、LL）的 `get_obs()` 提供。`Place.get_obs_dim()` 返回单库所观测维度（SR 1/0、TM 4+onehot_dim、PM 9、LL 4）；基类默认 `len(self.get_obs())`，子类可覆写。构网时 `build_single_device_net(obs_config=...)` 根据 `obs_config` 创建对应子类。`ClusterTool.get_obs()` 仅负责：1）`_get_obs_place_order()` 确定观测顺序（LP + 运输位 + 腔室）；2）依次调用 `place.get_obs()` 并聚合；`ClusterTool.get_obs_dim()` 对顺序内库所求和 `place.get_obs_dim()`。`step()` 返回 `(done, reward_result, scrap, action_mask, obs)`。Env 使用 `net.get_obs()` 与 `step` 返回值，不再自行构造 obs。详见 `docs/架构.md` 3.2 节。
 
+## Recent Update: Obs Build Path Performance
+
+- What changed:
+ - `ClusterTool` 初始化阶段新增观测缓存：`place_by_name`、`obs_place_names`、`obs_places`、`obs_offsets`、`obs_dim`、`obs_specs`、`obs_buffer`。
+ - `ClusterTool.get_obs()` 改为预分配 `float32` buffer 的原地写入路径，不再走 `list.extend(...) + np.array(...)`。
+ - `Place` 新增 `write_obs(buffer, offset)` 原地写接口；SR/TM/PM/LL 子类已实现固定维度写入，`get_obs()` 仅保留兼容层。
+- Why:
+ - 降低每步观测构建中的 Python 小对象分配、列表扩容和二次拷贝成本。
+ - 避免按名称线性查找 place，改为 O(1) 哈希映射。
+- Impact:
+ - 观测语义、顺序、维度定义保持不变（仍为 `LP -> TM -> chamber*`，且 `LP_done` 不进入主体观测）。
+ - 训练/推理调用方式不变，外部仍通过 `get_obs()` 获取 `np.ndarray`。
+- Example:
+ - 正例：单步调用 `get_obs()` 时直接复用内部 `obs_buffer` 并按 offset 写入，每个 place 只写自身片段。
+ - 反例：每步重建观测顺序并用 `extend + np.array` 做拼装与转换。
+
 ## Related Docs
 - `docs/README.md`
 - `docs/架构.md` Place 类继承结构
