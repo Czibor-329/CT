@@ -88,3 +88,27 @@ def test_cascade_route4_token_route_queue_shape_and_tail_gate():
     assert queue[5] == net._t_route_code_map["t_LLC"]
     assert queue[7] == net._t_route_code_map["t_LLD"]
     assert queue[-1] == net._t_route_code_map["t_LP_done"]
+
+
+def test_cascade_route5_token_route_queue_shape_and_tail_gate():
+    cfg = PetriEnvConfig(
+        n_wafer=1,
+        stop_on_scrap=False,
+        device_mode="cascade",
+        route_code=5,
+        process_time_map={
+            "PM7": 5,
+            "PM8": 5,
+            "PM9": 5,
+            "PM10": 5,
+        },
+    )
+    net = ClusterTool(config=cfg)
+    lp_tok = net._get_place("LP").head()
+    queue = lp_tok.route_queue
+
+    assert queue[0] == -1
+    assert len(queue) == 6
+    assert queue[1] == (net._t_route_code_map["t_PM7"], net._t_route_code_map["t_PM8"])
+    assert queue[3] == (net._t_route_code_map["t_PM9"], net._t_route_code_map["t_PM10"])
+    assert queue[-1] == net._t_route_code_map["t_LP_done"]

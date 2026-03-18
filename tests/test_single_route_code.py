@@ -390,6 +390,83 @@ def test_cascade_route_code4_manual_takt_interval_blocks_u_lp_until_due():
     assert bool(mask2[u_lp_idx])
 
 
+def test_cascade_route_code5_uses_pm7pm8_then_pm9pm10():
+    cfg = PetriEnvConfig(
+        n_wafer=1,
+        stop_on_scrap=False,
+        device_mode="cascade",
+        route_code=5,
+        process_time_map={
+            "PM7": 5,
+            "PM8": 5,
+            "PM9": 5,
+            "PM10": 5,
+        },
+    )
+    net = ClusterTool(config=cfg)
+
+    assert net.single_route_code == 5
+    assert net._u_targets["LP"] == ["PM7", "PM8"]
+    assert net._u_targets["PM7"] == ["PM9", "PM10"]
+    assert net._u_targets["PM8"] == ["PM9", "PM10"]
+    assert net._u_targets["PM9"] == ["LP_done"]
+    assert net._u_targets["PM10"] == ["LP_done"]
+
+    assert "LLC" not in net.id2p_name
+    assert "LLD" not in net.id2p_name
+    assert "PM1" not in net.id2p_name
+    assert "PM2" not in net.id2p_name
+    assert "PM3" not in net.id2p_name
+    assert "PM4" not in net.id2p_name
+
+    assert "t_LLC" not in net.id2t_name
+    assert "u_LLC" not in net.id2t_name
+    assert "t_LLD" not in net.id2t_name
+    assert "u_LLD" not in net.id2t_name
+
+
+def test_cascade_route_code5_defaults_pm7pm8_70_pm9pm10_200():
+    cfg = PetriEnvConfig(
+        n_wafer=1,
+        stop_on_scrap=False,
+        device_mode="cascade",
+        route_code=5,
+        process_time_map={},
+    )
+    net = ClusterTool(config=cfg)
+    assert net._get_place("PM7").processing_time == 70
+    assert net._get_place("PM8").processing_time == 70
+    assert net._get_place("PM9").processing_time == 200
+    assert net._get_place("PM10").processing_time == 200
+
+
+def test_cascade_route_code5_can_finish_via_pm9_then_lp_done():
+    cfg = PetriEnvConfig(
+        n_wafer=1,
+        stop_on_scrap=False,
+        device_mode="cascade",
+        route_code=5,
+        process_time_map={
+            "PM7": 5,
+            "PM8": 5,
+            "PM9": 5,
+            "PM10": 5,
+        },
+    )
+    net = ClusterTool(config=cfg)
+
+    _fire_by_name(net, "u_LP")
+    _fire_by_name(net, "t_PM7")
+    net.step(detailed_reward=True, wait_duration=5)
+    _fire_by_name(net, "u_PM7")
+    _fire_by_name(net, "t_PM9")
+    net.step(detailed_reward=True, wait_duration=5)
+    _fire_by_name(net, "u_PM9")
+    _fire_by_name(net, "t_LP_done")
+
+    assert net.done_count == 1
+
+
 def test_single_max_wafers_blocks_u_lp_when_wip_reaches_limit():
     cfg = PetriEnvConfig(
         n_wafer=2,

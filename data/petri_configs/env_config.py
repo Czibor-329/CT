@@ -113,6 +113,7 @@ class PetriEnvConfig:
     #   2: PM7/PM8 -> LLC -> PM1/PM2 -> LLD -> PM9/PM10
     #   3: PM7/PM8 -> LLC -> PM1/PM2 -> LLD -> LP_done
     #   4: [PM7 -> PM8 -> LLC -> LLD] * 5 -> LP_done
+    #   5: PM7/PM8 -> PM9/PM10 -> LP_done
     route_code: int = 1
     # route_code=4 的手动发片节拍间隔（秒）；<=0 表示不启用节拍门控
     route4_takt_interval: int = 0

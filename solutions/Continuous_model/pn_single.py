@@ -1403,6 +1403,13 @@ class ClusterTool:
                     "PM8": 70,
                     "LLD": 70,
                 }
+            elif self.route_code == 5:
+                defaults = {
+                    "PM7": 70,
+                    "PM8": 70,
+                    "PM9": 200,
+                    "PM10": 200,
+                }
             else:
                 pm_stage3_default = 600 if self.route_code == 1 else 300
                 defaults = {
