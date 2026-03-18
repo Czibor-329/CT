@@ -1056,19 +1056,47 @@ class ClusterTool:
 
     def _allow_start(self):
         """returns True if u_LP can fire now, based on takt and release count."""
-        takt = self._takt_result
-        cycle_takts = takt["cycle_takts"]
-        cycle_len = takt["cycle_length"]
-        if self._u_LP_release_count >= 1:
-            required = cycle_takts[self._u_LP_release_count % cycle_len]
-            if isinstance(required, float):
-                required = int(round(required))
-            if (self.time - self._last_u_LP_fire_time) < required:
-                return False
-            else:
-                return True
-        else:
+        required = self._takt_required_interval()
+        if required is None:
             return True
+        return (self.time - self._last_u_LP_fire_time) >= int(required)
+
+    def _takt_required_interval(self) -> Optional[int]:
+        """
+        返回下一次允许 u_LP 发片的最小间隔（秒）。
+
+        口径：
+        - 首片（release_count=0）不门控，返回 None
+        - 第 2 片（release_count=1）使用 cycle[0]（100 拍的第 1 个拍子）
+        - 第 3 片起（release_count>=2）按序推进（idx=1,2,3...），必要时对 100 取模
+        """
+        takt = self._takt_result
+        if not takt:
+            return None
+        release_count = int(self._u_LP_release_count)
+        if release_count <= 0:
+            return None
+
+        cycle_takts = takt.get("cycle_takts") or []
+        if not cycle_takts:
+            return None
+        cycle_len = int(takt.get("cycle_length") or len(cycle_takts))
+        if cycle_len <= 0:
+            return None
+
+        if release_count == 1:
+            idx = 0
+        else:
+            idx = (release_count - 1) % cycle_len
+
+        required = cycle_takts[idx]
+        if isinstance(required, float):
+            required = int(round(required))
+        else:
+            required = int(required)
+        if required < 0:
+            required = 0
+        return required
 
     def _build_transition_index(self) -> None:
         self._u_transition_by_source = {}
@@ -1220,16 +1248,10 @@ class ClusterTool:
 
             # 节拍限制：u_LP 发片间隔不得小于当前周期节拍
             if self._takt_result and t_name == "u_LP":
-                takt = self._takt_result
-                cycle_takts = takt["cycle_takts"]
-                cycle_len = takt["cycle_length"]
-                if self._u_LP_release_count >= 1:
-                    required = cycle_takts[self._u_LP_release_count % cycle_len]
-                    if isinstance(required, float):
-                        required = int(round(required))
-                    if (self.time - self._last_u_LP_fire_time) < required:
-                        disabled.append({"action": t, "name": t_name, "reason": "takt_release_limit"})
-                        continue
+                required = self._takt_required_interval()
+                if required is not None and (self.time - self._last_u_LP_fire_time) < int(required):
+                    disabled.append({"action": t, "name": t_name, "reason": "takt_release_limit"})
+                    continue
 
             enabled.append(t)
 
@@ -1490,14 +1512,9 @@ class ClusterTool:
                         delta = 0
                     if best is None or delta < best:
                         best = delta
-        if self._takt_result and self._u_LP_release_count >= 1:
-            takt = self._takt_result
-            cycle_takts = takt["cycle_takts"]
-            cycle_len = takt["cycle_length"]
-            required = cycle_takts[self._u_LP_release_count % cycle_len]
-            if isinstance(required, float):
-                required = int(round(required))
-            delta_takt = self._last_u_LP_fire_time + required - self.time
+        required = self._takt_required_interval()
+        if required is not None:
+            delta_takt = self._last_u_LP_fire_time + int(required) - self.time
             if delta_takt > 0:
                 if best is None or delta_takt < best:
                     best = delta_takt

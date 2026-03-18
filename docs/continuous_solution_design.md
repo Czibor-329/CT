@@ -382,14 +382,16 @@ python -m solutions.Continuous_model.export_inference_sequence \
 - 节拍构造规则（当前口径）：
   1. 运输时间统一口径：分析器内部先对每道工序做 `p[i] = p[i] + 20`；
   2. 快节拍：`fast_takt = max_i(p[i] / m[i])`；
-  3. 有维护工序（`q[i]` 非空）有 `m[i]` 个慢节拍：先放 `q[i]*m[i]` 个快节拍，再从前往后迭代计算慢节拍：
+  3. 有维护工序（`q[i]` 非空）按固定窗口生成 100 个拍子：
+     - 前 `q[i]*m[i]-1` 个拍子为快节拍；
+     - 后续按块循环：先生成 `q[i]` 个慢节拍（回推 `m[i]-1` 拍），再追加 `q[i]*(m[i]-1)` 个快节拍；当 `m[i]=1` 时该段快节拍数量按口径取 `q[i]-1`；
      `slow = max(fast_takt, (p[i]+d[i]) - sum(前 m[i]-1 个节拍))`；
-  4. 工序周期长度：`q[i] * m[i] + m[i]`（无维护工序保持快节拍基线）；
-  5. 全线周期长度为各工序周期长度的最小公倍数（LCM），按时间从前往后合并；
+  4. 无维护工序（`q[i]` 为空）为 100 个快节拍基线；
+  5. 全线节拍为各工序 100 个拍子逐位合并（逐位 max），按时间从前往后合并；
   6. 若同位出现来自不同工序的慢节拍冲突，取最大慢节拍所属工序 `i'`，按
      `current = max(fast_takt, (p[i']+d[i']) - sum(前 m[i']-1 个全线节拍))` 重算当前位；
   7. 峰值慢节拍集合为 `cycle_takts` 中严格大于 `fast_takt` 的去重升序值。
-- `max_parts` 作为循环长度上限：若 LCM 周期长度大于 `max_parts`，函数抛出异常。
+- `max_parts` 要求不小于 100（固定窗口长度）。
 - 口径说明：实现已从“事件仿真+状态签名重复”调整为“工序周期叠加+逐位 max”。
 - 示例运行：
   - `python -m solutions.Continuous_model.takt_cycle_analyzer`
@@ -399,6 +401,6 @@ python -m solutions.Continuous_model.export_inference_sequence \
 - **工序时长**：`_compute_takt_result()` 传入工序原始处理时间 `p`，运输时间常量 `20` 由 `takt_cycle_analyzer.analyze_cycle` 统一计入。
 - **级联配置样式统一**：`cascade.json` 已与 `single.json` 对齐为 `chambers` 集成块风格；每个腔室在 `chambers.<name>` 下统一配置 `process_time / cleaning_duration / cleaning_trigger_wafers / proc_rand_scale`，由 `PetriEnvConfig` 归一化为 `process_time_map` 与 `cleaning_*_map`。
 - **规则**：仅当“距上次 u_LP 发射的时间”不小于当前周期内对应位置的节拍值时，才允许再次发射 u_LP；首片不受限。
-- **取位偏移**：当首片已发射后，第一次进入节拍限制时从循环第 2 个元素开始取值（即跳过第 1 个元素）。
+- **取位偏移**：首片发射后，第 2 片按 `cycle_takts[0]` 门控；后续按 100 拍序列依次推进（必要时取模）。
 - **实现**：`_compute_takt_result()` 根据 `_route_stages`、`_episode_proc_time_map`、`cleaning_targets` 与 per-chamber 的 `_cleaning_trigger_map`/`_cleaning_duration_map` 构建分析用 stages（p 为原始工序时长）；并行 stage 的 `p` 采用该层瓶颈值（`max`），`q/d` 取该层最可能形成慢节拍的腔室（按 `p+d` 最大）后调用 `takt_cycle_analyzer.analyze_cycle`；`get_action_mask` / `get_enable_actions_with_reasons` 在 u_LP 使能判断中增加节拍间隔检查；原因码 `takt_release_limit` 表示因节拍限制未使能。腔室级清洁与工序参数可由配置中的 `chambers` 集成块提供（见 pn_api.md）。
 - **影响**：若节拍分析失败或无可分析工序（如全为缓冲站），`_takt_result` 为 None，不施加发片限制。
