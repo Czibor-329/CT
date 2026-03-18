@@ -2,6 +2,17 @@
 
 ## 2026-03-17
 
+### Ultra 并行采样子环境终止即自重置修复 (2026-03-17)
+- **What changed**：`env_single.py` 的 `FastEnvWrapper` 终止判定改为 `scrap/finish/terminated` 联合触发；并新增 `net._last_state_scan.is_scrap` 兜底，避免 `stop_on_scrap=False` 时 scrap 标志在并行采样链路中丢失。`VectorEnv` 下仅对触发终止的子环境执行自动 `reset`。
+- **Why**：修复并行 rollout 中“某个子环境发生 scrap 但未被视为终止，导致不重置并持续污染轨迹”的问题。
+- **Impact**：`collect_rollout_ultra()` 的 `dones` 现在会正确覆盖 scrap/finish 终止；GAE 与回报截断按子环境独立生效，不会影响其他并行子环境继续采样。
+- **Examples**：`--rollout-n-envs 8` 训练时，任一子环境触发 scrap 或 finish 后会立刻进入下一回合起点，其余 7 个子环境保持当前轨迹继续运行。
+
+### 单设备同步取片 resident scrap 撤销修复 (2026-03-17)
+- **What changed**：`pn_single.step()` 在非 WAIT 分支保留“先 `_advance_and_compute_reward` 再 `_fire`”顺序；新增同步撤销判定：若本步 `u_*` 已取走与 `scan_info.scrap_info` 同 `token_id` 且同源腔室的 resident wafer，则撤销本步 scrap（不终止、不追加 `scrap_penalty`）。
+- **Why**：修复“晶圆在驻留边界/超界时，本步已同步取片却仍被先判 scrap”导致的误终止与误扣分。
+- **Impact**：行为仅影响单设备非 WAIT 同步取片场景；WAIT 分支、qtime 统计、mask/obs 构造保持不变。
+
 ### 可视化模型推理切换到 `env.net.get_obs()` 直连 (2026-03-17)
 - **What changed**：`visualization/main.py` 的 Model 推理入口（单动作/并发）统一改为直接读取 `env.net.get_obs()`，移除对 `Env_PN_Single._build_obs()` 的依赖。
 - **Why**：单设备观测已统一由 `pn_single` 构网层输出，继续依赖环境私有方法会导致接口漂移与运行时错误。

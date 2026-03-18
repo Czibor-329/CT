@@ -332,14 +332,20 @@ class FastEnvWrapper:
                 )
             reward = float(reward_result) if not isinstance(reward_result, dict) else float(reward_result.get("total", 0.0))
             deadlock = bool(getattr(self.env.net, "_last_deadlock", False))
+            last_scan = getattr(self.env.net, "_last_state_scan", None)
+            scan_scrap = bool(last_scan.get("is_scrap", False)) if isinstance(last_scan, dict) else False
+            scrap_flag = bool(scrap) or scan_scrap
+            finish_flag = bool(done and not scrap_flag and not deadlock)
+            terminated = bool(done) or scrap_flag or finish_flag
             info: Dict[str, Any] = {
                 "action_mask": np.asarray(action_mask, dtype=np.bool_),
-                "scrap": bool(scrap),
+                "scrap": scrap_flag,
                 "deadlock": deadlock,
-                "finish": bool(done and not scrap and not deadlock),
+                "finish": finish_flag,
+                "terminated": terminated,
                 "time": int(getattr(self.env.net, "time", 0)),
             }
-            return np.asarray(obs, dtype=np.float32), reward, bool(done), info
+            return np.asarray(obs, dtype=np.float32), reward, terminated, info
 
         # 兼容旧接口环境（TensorDict step）
         if isinstance(getattr(self, "_cached_td", None), TensorDict):
@@ -351,7 +357,7 @@ class FastEnvWrapper:
             reward = float(nxt["reward"].item() if torch.is_tensor(nxt["reward"]) else nxt["reward"])
             done = bool(nxt["terminated"].item() if torch.is_tensor(nxt["terminated"]) else nxt["terminated"])
             mask = self._as_numpy(nxt["action_mask"], np.bool_)
-            info = {"action_mask": mask}
+            info = {"action_mask": mask, "terminated": done}
             self._cached_td = nxt.clone()
             return obs, reward, done, info
 
@@ -381,14 +387,19 @@ class FastEnvWrapper:
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
         obs, reward, done, info = self._fast_step_single_env(int(action))
+        terminated = bool(done) or bool(info.get("scrap", False)) or bool(info.get("finish", False))
         self._last_obs_np = obs
         self._last_mask_np = np.asarray(info.get("action_mask"), dtype=np.bool_)
-        if done:
+        if terminated:
+            terminal_obs = np.asarray(obs, dtype=np.float32).copy()
             obs, reset_info = self.reset()
-            info["terminal_observation"] = info.get("terminal_observation", None)
+            info["terminal_observation"] = terminal_obs
             info["auto_reset"] = True
+            info["terminated"] = True
             info["action_mask"] = reset_info["action_mask"]
-        return obs, reward, done, info
+        else:
+            info["terminated"] = False
+        return obs, reward, terminated, info
 
 
 class VectorEnv:

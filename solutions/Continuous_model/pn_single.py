@@ -365,6 +365,8 @@ class ClusterTool:
         self._init_obs_cache()
         self._build_transition_index()
         self._rebuild_token_pool()
+        if self._training:
+            print(self._takt_result)
 
     def train(self):
         """训练模式"""
@@ -403,6 +405,7 @@ class ClusterTool:
         action = a1
         do_wait = (wait_duration is not None) or action is None
         scan_info: Dict[str, Any] = {}
+        log_entry: Optional[Dict[str, Any]] = None
         t1 = self.time
 
         if do_wait:
@@ -463,6 +466,13 @@ class ClusterTool:
         scrap_info = scan.get("scrap_info")
         if "is_scrap" not in scan:
             is_scrap, scrap_info = self._check_scrap()
+        # 非 WAIT 场景下，若本步 u_* 已取走同一 resident wafer，则撤销本步 scrap。
+        if self._should_cancel_resident_scrap_after_fire(scan=scan, log_entry=log_entry):
+            is_scrap = False
+            scrap_info = None
+            scan["is_scrap"] = False
+            scan["scrap_info"] = None
+            self._last_state_scan = scan
         if is_scrap:
             self.scrap_count += 1
             self.resident_violation_count += 1
@@ -917,6 +927,33 @@ class ClusterTool:
             "t2": int(end_time),
             "token_id": wafer_id,
         }
+
+    def _should_cancel_resident_scrap_after_fire(
+        self,
+        scan: Dict[str, Any],
+        log_entry: Optional[Dict[str, Any]],
+    ) -> bool:
+        if not isinstance(scan, dict) or not isinstance(log_entry, dict):
+            return False
+        if not bool(scan.get("is_scrap", False)):
+            return False
+        scrap_info = scan.get("scrap_info")
+        if not isinstance(scrap_info, dict):
+            return False
+        if scrap_info.get("type") != "resident":
+            return False
+        t_name = str(log_entry.get("t_name", ""))
+        if not t_name.startswith("u_"):
+            return False
+        source_name = t_name[2:]
+        if scrap_info.get("place") != source_name:
+            return False
+        try:
+            fired_token_id = int(log_entry.get("token_id", -1))
+            scrap_token_id = int(scrap_info.get("token_id", -2))
+        except (TypeError, ValueError):
+            return False
+        return fired_token_id >= 0 and fired_token_id == scrap_token_id
 
     @staticmethod
     def _token_route_gate(tok: BasedToken) -> object:
