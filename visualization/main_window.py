@@ -975,10 +975,8 @@ class PetriMainWindow(QMainWindow):
             results_dir = Path("results")
             results_dir.mkdir(exist_ok=True)
             
-            # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"continuous_gantt_{timestamp}.png"
-            output_path = results_dir / filename
+            # 固定输出文件名（覆盖写入）
+            output_path = results_dir / "gantt.png"
             
             success = self.viewmodel.render_gantt(str(output_path))
             

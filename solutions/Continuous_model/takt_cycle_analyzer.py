@@ -70,14 +70,14 @@ def _build_stage_takt_cycle(
         cycle.extend([float(fast_takt)] * n)
         is_slow.extend([False] * n)
 
-    # 循环块：q 个慢拍 + q*(m-1) 个快拍（m==1 时快拍数量为 q-1）
-    fast_block = int(q) * (int(m) - 1) if int(m) > 1 else int(q) - 1
+    # 循环块：m 个慢拍 + (q-1)*m 个快拍
+    fast_block = (int(q)-1) * int(m)
     if fast_block < 0:
         fast_block = 0
 
     while len(cycle) < TAKT_HORIZON:
-        # q 个慢拍
-        for _ in range(int(q)):
+        # m 个慢拍
+        for _ in range(int(m)):
             if len(cycle) >= TAKT_HORIZON:
                 break
             lookback_sum = sum(cycle[-(m - 1) :]) if m > 1 else 0.0
@@ -88,7 +88,7 @@ def _build_stage_takt_cycle(
         if len(cycle) >= TAKT_HORIZON:
             break
 
-        # q*(m-1) 个快拍（m==1 => q-1）
+        # (q-1)*m 个快拍
         if fast_block > 0:
             n = min(TAKT_HORIZON - len(cycle), fast_block)
             cycle.extend([float(fast_takt)] * n)
@@ -214,9 +214,9 @@ def analyze_cycle(stages: List[Dict[str, Any]], max_parts: int = 10000) -> Dict[
 
 if __name__ == "__main__":
     stages = [
-        {"name": "s1", "p": 100, "m": 1, "q": 10, "d": 500},
-        {"name": "s2", "p": 300, "m": 2, "q": 2, "d": 300},
-        {"name": "s3", "p": 200, "m": 1, "q": None, "d": 0},
+        {"name": "s1", "p": 70, "m": 2, "q": 13, "d": 300},
+        {"name": "s2", "p": 300, "m": 2, "q": 13, "d": 300},
+        {"name": "s3", "p": 70, "m": 1, "q": None, "d": 0},
     ]
 
     result = analyze_cycle(stages, max_parts=10000)

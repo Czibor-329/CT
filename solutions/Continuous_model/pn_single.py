@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import deque
 from time import perf_counter
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
+from pathlib import Path
 from solutions.Continuous_model.helper_function import (
     _normalize_wait_durations,
     _preprocess_process_time_map,
@@ -31,6 +32,7 @@ from solutions.Continuous_model.construct_single import (
 )
 from solutions.Continuous_model.pn import Place
 from solutions.Continuous_model.takt_cycle_analyzer import analyze_cycle
+from visualization.plot import Op, plot_gantt_hatched_residence
 
 CHAMBER = 1
 DELIVERY_ROBOT = 2
@@ -365,7 +367,7 @@ class ClusterTool:
         self._init_obs_cache()
         self._build_transition_index()
         self._rebuild_token_pool()
-        if self._training:
+        if not self._training:
             print(self._takt_result)
 
     def train(self):
@@ -1997,4 +1999,122 @@ class ClusterTool:
             self._token_stats[token.token_id]["chambers"].setdefault(place_name, {"enter": None, "exit": None})["exit"] = self.time
 
     def render_gantt(self, out_path: str) -> None:
-        return None
+        timelines = getattr(self, "_chamber_timeline", None)
+        if not isinstance(timelines, dict) or not timelines:
+            print("警告: _chamber_timeline 为空，跳过甘特图绘制")
+            return
+
+        # 以 _route_stages 定义 stage 与并行 machine（stage=1..S, machine=0..M-1）
+        stage_map: Dict[str, Tuple[int, int]] = {}
+        stage_module_names: Dict[int, List[str]] = {}
+        proc_time: Dict[int, float] = {}
+        capacity: Dict[int, int] = {}
+
+        route_stages: List[List[str]] = list(getattr(self, "_route_stages", []) or [])
+        for stage_idx, stage_places in enumerate(route_stages, start=1):
+            names = [str(x) for x in (stage_places or [])]
+            if not names:
+                continue
+            stage_module_names[int(stage_idx)] = names
+            capacity[int(stage_idx)] = int(len(names))
+            max_p = 0
+            for machine_idx, name in enumerate(names):
+                stage_map[name] = (int(stage_idx), int(machine_idx))
+                place = getattr(self, "_place_by_name", {}).get(name)
+                ptime = int(getattr(place, "processing_time", 0)) if place is not None else 0
+                if ptime > max_p:
+                    max_p = ptime
+            proc_time[int(stage_idx)] = float(max_p)
+
+        if not stage_map:
+            print("警告: _route_stages 为空，无法构建 stage 映射，跳过甘特图绘制")
+            return
+
+        now_t = float(getattr(self, "time", 0))
+        ops: List[Op] = []
+        jobs: Set[int] = set()
+
+        for chamber_name, items in timelines.items():
+            if chamber_name not in stage_map:
+                continue
+            if not isinstance(items, list):
+                continue
+            stage, machine = stage_map[chamber_name]
+            place = getattr(self, "_place_by_name", {}).get(chamber_name)
+            ptime = float(getattr(place, "processing_time", 0)) if place is not None else 0.0
+
+            for entry in items:
+                try:
+                    enter, leave, wid = entry
+                except Exception:
+                    continue
+                try:
+                    wid_int = int(wid)
+                except Exception:
+                    continue
+                if wid_int < 0:
+                    continue
+                try:
+                    start = float(enter)
+                except Exception:
+                    continue
+                end = now_t
+                if leave is not None:
+                    try:
+                        end = float(leave)
+                    except Exception:
+                        end = now_t
+                if end < start:
+                    continue
+
+                proc_end = start + max(0.0, float(ptime))
+                if proc_end > end:
+                    proc_end = end
+
+                ops.append(
+                    Op(
+                        job=wid_int,
+                        stage=int(stage),
+                        machine=int(machine),
+                        start=float(start),
+                        proc_end=float(proc_end),
+                        end=float(end),
+                    )
+                )
+                jobs.add(wid_int)
+
+        if not ops:
+            print("警告: 没有可绘制的腔室 Op 数据（可能尚未进入任何腔室），跳过甘特图绘制")
+            return
+
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        final_path = out.parent / "gantt.png"
+        base_path = out.with_suffix("")
+
+        n_jobs = max(1, len(jobs))
+        arm_info = {"ARM1": [], "ARM2": [], "STAGE2ACT": {}}
+        policy = 2  # plot.py 映射为 RL1
+
+        plot_gantt_hatched_residence(
+            ops=ops,
+            proc_time=proc_time,
+            capacity=capacity,
+            n_jobs=int(n_jobs),
+            out_path=str(base_path),
+            arm_info=arm_info,
+            with_label=True,
+            no_arm=True,
+            policy=int(policy),
+            stage_module_names=stage_module_names,
+        )
+
+        generated_path = Path(f"{base_path}RL1_job{int(n_jobs)}.png")
+        if generated_path.exists():
+            try:
+                final_path.write_bytes(generated_path.read_bytes())
+            except Exception:
+                import shutil
+                shutil.copyfile(str(generated_path), str(final_path))
+        else:
+            print(f"警告: 未找到绘图输出文件: {generated_path}")
