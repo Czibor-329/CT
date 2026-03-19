@@ -2,6 +2,16 @@
 
 ## 2026-03-19
 
+### 文档体系重构：5 个主题主文档 + 兼容层 (2026-03-19)
+- **What changed**：新增 5 个主题主文档：`overview/project-context.md`、`continuous-model/pn-single.md`、`visualization/ui-guide.md`、`training/training-guide.md`、`td-petri/td-petri-guide.md`；新增 `docs/deprecated/README.md` 迁移索引；将 `project.md`、`架构.md`、`continuous_solution_design.md`、`viz.md`、`td_petri.md`、`td_petri_modeling.md`、`Petri animate tool.md` 改为兼容跳转页；`docs/README.md` 重构为唯一导航入口。
+- **Why**：原文档分散且重复，AI 与新成员难以在短时间定位“项目描述 / pn_single / 可视化 / 训练 / td_petri”权威说明。
+- **Impact**：文档入口收敛为“1 个索引 + 5 个主文档 + deprecated 兼容层”；旧链接仍可用但不再承载规范内容。新增 `scripts/docs/validate_docs.py` 用于校验索引覆盖、章节完整性、链接可达与过时关键词。
+
+### 文档与实现一致性修订 (2026-03-19)
+- **What changed**：同步修订 `env_place_obs.md`、`continuous_solution_design.md`，移除对 `Env_PN_Single_PlaceObs` 和 `--place-obs` 的旧描述；同时修正 `check_release_penalty.py` 的必填 `--sequence`、`export_inference_sequence.py` 的固定输出路径 `seq/tmp.json`、以及 `train_single.py` 的正式入口说明。
+- **Why**：避免文档继续指向已移除接口或错误输出路径，降低新脚本接入和回放验证时的误用风险。
+- **Impact**：当前文档会明确区分历史接口与现行实现；单设备统一入口、验证脚本参数和导出产物位置都与代码保持一致。
+
 ### 单设备路线参数与节拍输入一致性严格校验 (2026-03-19)
 - **What changed**：`solutions/Continuous_model/pn_single.py` 对 `device_mode/single_route_code` 增加严格规范化与合法性校验：`device_mode` 仅允许 `single/cascade`，`route_code` 强制转 `int` 并按模式校验（single: `0/1`，cascade: `1/2/3/4/5`），非法值直接抛 `ValueError`，不再静默回退。新增 `_episode_proc_time_map` 一致性守卫（必须与当前路线 `chambers` 完全一致）以及节拍分析前的 stage-工时一致性检查（越界/缺失会带 `device_mode/route_code/stage` 明细报错）。
 - **Why**：防止路线配置与工时映射不一致时继续运行，导致节拍计算错误且难以定位（例如 route5 混入非本路线腔室）。

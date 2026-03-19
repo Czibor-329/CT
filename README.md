@@ -27,9 +27,12 @@
 
 ## Docs
 
-- docs/pn.md：`pn.py` 使用与架构概览
-- docs/pn_api.md：`pn.py` API 文档
-- docs/pn_design.md：`pn.py` 设计说明
+- docs/README.md：文档总入口（先读）
+- docs/overview/project-context.md：项目描述与模块边界
+- docs/continuous-model/pn-single.md：pn_single 主题文档
+- docs/visualization/ui-guide.md：可视化主题文档
+- docs/training/training-guide.md：训练主题文档
+- docs/td-petri/td-petri-guide.md：td_petri 主题文档
 
 
 ## Log

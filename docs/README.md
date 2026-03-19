@@ -1,22 +1,48 @@
-## 文档目录
+# Docs Index
 
-本目录包含以下文档：
+## Abstract
+- What: 本文档是 CT 项目的唯一文档导航入口。
+- When: 查找任何架构、实现、训练、可视化、Td_petri 说明时先读本页。
+- Not: 本页不承载实现细节；细节以主题主文档为准。
+- Key rules:
+  - 权威规范仅维护在 5 个主题主文档中。
+  - 旧文件名只作为兼容跳转入口。
+  - 新增规范文档必须同步更新本索引。
 
-- `gantt.md`
-- `modeling.md`
-- `Petri animate tool.md`
-- `pn_api.md`
-- `pn_design.md`
-- `project.md`
-- `rl-design.md`
-- `routes.md`
-- `td_petri_modeling.md`
-- `td_petri.md`
-- `viz.md`
-- `env_place_obs.md`
-- `cloud-gpu-training-review.md`
+## Canonical Docs
+- [`overview/project-context.md`](./overview/project-context.md)：项目描述、系统边界、模块地图与统一入口命令。
+- [`continuous-model/pn-single.md`](./continuous-model/pn-single.md)：pn_single 架构、接口、执行链与关键约束。
+- [`visualization/ui-guide.md`](./visualization/ui-guide.md)：可视化界面参数、模型加载与回放数据契约。
+- [`training/training-guide.md`](./training/training-guide.md)：single/cascade/concurrent 训练入口、配置优先级与产物位置。
+- [`td-petri/td-petri-guide.md`](./td-petri/td-petri-guide.md)：Td_petri 边界、入口脚本与序列契约。
 
-说明：
-- `viz.md`：可视化模块文档（含 PySide6 菜单栏、设备切换占位、晶圆数量占位、模型/动作序列选择入口说明）。
-- `env_place_obs.md`：单设备环境 `Env_PN_Single_PlaceObs` 的库所中心观测设计与特征定义。
-- `cloud-gpu-training-review.md`：云端 GPU 训练代码审查（pn_single / train_single / env_single 设备与数据流、CLI、种子与日志建议）。
+## Appendices
+- [`pn_api.md`](./pn_api.md)：`pn.py` API 说明（补充参考）。
+- [`pn_design.md`](./pn_design.md)：`pn.py` 设计说明（补充参考）。
+- [`routes.md`](./routes.md)：调度技术路线与约束说明（历史与背景）。
+- [`rl-design.md`](./rl-design.md)：强化学习奖励设计与状态示例（补充参考）。
+- [`modeling.md`](./modeling.md)：Petri 网建模基础说明。
+- [`gantt.md`](./gantt.md)：甘特图绘制工具规范。
+- [`problem_description.md`](./problem_description.md)：问题定义规范入口。
+- [`cloud-gpu-training-review.md`](./cloud-gpu-training-review.md)：云端 GPU 训练审查记录。
+- [`可能增加的obs_features.md`](./可能增加的obs_features.md)：候选观测特征扩展方案。
+
+## Deprecated / Compatibility
+- [`deprecated/README.md`](./deprecated/README.md)：旧文档迁移映射与兼容策略。
+- [`project.md`](./project.md)：兼容跳转页。
+- [`架构.md`](./架构.md)：兼容跳转页。
+- [`continuous_solution_design.md`](./continuous_solution_design.md)：兼容跳转页。
+- [`viz.md`](./viz.md)：兼容跳转页。
+- [`td_petri.md`](./td_petri.md)：兼容跳转页。
+- [`td_petri_modeling.md`](./td_petri_modeling.md)：兼容跳转页。
+- [`env_place_obs.md`](./env_place_obs.md)：历史接口说明（已移除功能）。
+- [`problem_discription.md`](./problem_discription.md)：旧拼写文件兼容入口。
+- [`Petri animate tool.md`](./Petri%20animate%20tool.md)：旧工具说明兼容入口。
+
+## Writing Rules
+1. 所有主文档必须包含固定章节：`Abstract / Scope / Architecture or Data Flow / Interfaces / Behavior Rules / Examples / Edge Cases / Related Docs / Change Notes`。
+2. 新增或修改 CLI 参数后，必须同步更新对应主题主文档和本索引。
+3. 若移除接口，必须在兼容页写明“新路径 + 迁移日期 + 差异说明”。
+
+## Change Notes
+- 2026-03-19: 重构为“1 个入口 + 5 个主文档 + 附录 + deprecated 兼容层”。
