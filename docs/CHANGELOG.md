@@ -2,6 +2,21 @@
 
 ## 2026-03-20
 
+### 工序时长预处理迁入构网 (`construct_single`) (2026-03-20)
+- **What changed**：默认填充与取整到 5 秒（原 `helper_function._preprocess_process_time_map` 口径）在 `construct_single.preprocess_process_time_map_for_single_net` 中执行；`build_single_device_net` 返回值新增/保证 `process_time_map`（与 `route_meta["chambers"]` 及库所 `processing_time` 一致）。`pn_single.ClusterTool` 传入未预处理的合并 `process_time_map`，构网后设 `_base_proc_time_map = info["process_time_map"]`，删除 `_preprocess_process_time_map` 与 `_apply_base_proc_times_to_marks_and_ptime`。
+- **Why**：避免构网与运行时各算一遍预处理，消除 `marks`/`ptime` 与 `_base_proc_time_map` 漂移。
+- **Impact**：直接调用 `build_single_device_net` 的代码可依赖返回的 `process_time_map` 作为权威腔室工时表。
+
+### 移除单设备随机工序时长及配置项 (2026-03-20)
+- **What changed**：删除按 episode 对腔室 `process_time` 做均匀随机缩放的能力：`PetriEnvConfig` 移除 `proc_rand_enabled`、`proc_time_rand_scale_map`；`chambers` 与 route `sequence` 不再读取 `proc_rand_scale`；`pn_single.ClusterTool` 移除 `_episode_proc_time_map` 及 `_refresh_episode_proc_time`、`_validate_episode_proc_time_map_consistency`、`_align_base_proc_time_map_with_route_chambers`，节拍/导出仅用 `_base_proc_time_map`（构网后取自 `info["process_time_map"]`）；`Env_PN_Single` / `visualization/main.py` 去掉对应构造参数；`train_single.py` 移除 `--proc-time-rand-enabled` 及 `train_single(...)` 相关形参；`export_inference_sequence` 的 `replay_env_overrides` 不再写入 `proc_rand_enabled`。
+- **Why**：该功能不再使用，保留会造成配置与文档双轨维护。
+- **Impact**：旧 JSON 中上述键名会被 `PetriEnvConfig.load` 忽略；需不确定性时请改用显式 `process_time_map` 或外部实验设计，而非运行时随机缩放。
+
+### 移除 `ClusterTool._rebuild_token_pool` 与 `_token_pool` (2026-03-20)
+- **What changed**：删除 `_rebuild_token_pool` 及 `_token_pool`；`_check_scrap` 改为直接扫描 `marks` 中 `CHAMBER` 内 token（与 `get_next_event_delta` 一致，均不依赖全局 token 列表）；删除已无引用的 `_token_remaining_time`。
+- **Why**：`_fire` 已维护变迁语义与 `marks`；池结构仅服务 `_check_scrap`，可去掉冗余同步点。
+- **Impact**：手动篡改 `marks` 后不再需要调用 `_rebuild_token_pool`；若外部曾依赖 `_token_pool` 引用需改为遍历 `marks`。
+
 ### 移除使能侧车与 `export_inference_sequence` 使能日志导出 (2026-03-20)
 - **What changed**：删除 `Env_PN_Single._last_action_enable_info`、`_action_enable_info_from_mask` 及 `eval_mode` 下逐步填充；`export_inference_sequence.py` 不再生成 `results/eval_logs.json` / `eval_logs.md`，移除 `--results-dir` 与 `rollout_and_export` 的 `results_dir`；`petri_single_adapter` 的 `step_verbose` 仅打印步号、时间与执行动作名。
 - **Why**：不在环境或独立文件中回传使能明细；策略与导出仍可从 TensorDict / `step` 的 `action_mask` 获知合法性。
@@ -36,7 +51,7 @@
 - **Impact**：当需要与旧 `route_code=5` 行为对齐时，可直接使用 `single_route_name=2-4`（路径 `LP->PM7/PM8->PM9/PM10->LP_done`，不含 `LLC/LLD` stage）。同步新增测试覆盖该组合。
 
 ### 修复配置驱动路径 stage 工时被全局配置覆盖 (2026-03-19)
-- **What changed**：`solutions/Continuous_model/pn_single.py` 在 `single_route_config` 模式下，初始化时先解析所选 route 的 stage 覆盖（`process_time/cleaning_duration/cleaning_trigger_wafers/proc_rand_scale`）并注入到 `_base_proc_time_map` 与 cleaning 映射，再进入 `_preprocess_process_time_map`；同时统一 `single_route_name` 解析结果，保证与构网阶段使用同一路线。
+- **What changed**：`solutions/Continuous_model/pn_single.py` 在 `single_route_config` 模式下，初始化时先解析所选 route 的 stage 覆盖（`process_time/cleaning_duration/cleaning_trigger_wafers`；当时曾含 `proc_rand_scale`，已于 2026-03-20 移除）并合并进传入构网的 `process_time_map` 与 cleaning 映射；构网侧完成预处理与取整（2026-03-20 起为 `construct_single.preprocess_process_time_map_for_single_net`）；同时统一 `single_route_name` 解析结果，保证与构网阶段使用同一路线。
 - **Why**：此前即使路径拓扑已切到 `1-1`，`_refresh_episode_proc_time()` 仍可能被全局 `process_time_map` 回写，导致腔室工时显示为 `cascade.json` 默认值。
 - **Impact**：配置驱动下工时优先级变为 `route stage > process_time_map/chambers default`（并保持取整到 5 的倍数）；新增回归断言 `tests/test_single_route_config_driven.py::test_petri_env_config_loads_single_route_config_from_path`，覆盖 `1-1` 的 PM/LLD 工时和清洗参数。
 
@@ -103,7 +118,7 @@
 ### train_single 收敛为 Ultra-only 并修复 CPU 卡顿路径 (2026-03-17)
 - **What changed**：`train_single.py` 移除 `single collector`、`blame`、`benchmark` 相关训练入口与代码分支，训练主循环固定为 ultra rollout；GAE 在 CPU 上强制走 eager（仅 CUDA 尝试 compile）。
 - **Why**：简化分支可降低维护成本；同时避免本地 CPU 训练触发 compile 首次编译开销，出现“卡住/长时间无响应”。
-- **Impact**：CLI 参数收敛为 `--device/--compute-device/--checkpoint/--proc-time-rand-enabled/--rollout-n-envs`；训练行为更可预测，CPU 本地调试路径更稳定。
+- **Impact**：CLI 参数收敛为 `--device/--compute-device/--checkpoint/--rollout-n-envs`（后续已移除 `--proc-time-rand-enabled`）；训练行为更可预测，CPU 本地调试路径更稳定。
 
 ### train_single 更新阶段极限优化（Batched PPO + 长轨迹连续采样）(2026-03-17)
 - **What changed**：`train_single.py` 更新路径改为纯 `dict[tensor]`，移除 rollout->TensorDict->tensor 往返；PPO 更新由 `epoch + minibatch` 双层循环改为“每个 epoch 单次大 batch forward”；策略更新的 `log_prob/entropy` 改为 fused `masked log_softmax` 计算（不再构造 `MaskedCategorical`）；GAE 改为 `[T,N]` 计算并采用 `torch.compile` 优先、失败自动回退 eager。

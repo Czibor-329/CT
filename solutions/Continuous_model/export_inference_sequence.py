@@ -231,9 +231,8 @@ def _rollout_single_sequence(
         "idle_timeout_penalty": {"count": len(idle_steps), "steps": idle_steps},
     }
     replay_env_overrides = {
-        # 回放时固定为本次 episode 的实际工序时长，避免可视化重启后随机采样导致动作序列失配。
-        "process_time_map": dict(getattr(env.net, "_episode_proc_time_map", {})),
-        "proc_rand_enabled": False,
+        # 回放时固定为本次 episode 的实际工序时长，避免可视化重启后与导出时不一致。
+        "process_time_map": dict(getattr(env.net, "_base_proc_time_map", {})),
         "robot_capacity": int(robot_capacity),
         "route_code": int(getattr(env.net, "single_route_code", 0)),
         "device_mode": str(device_mode),

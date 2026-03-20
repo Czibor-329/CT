@@ -43,7 +43,7 @@ FULL_PROCESS_TIME_MAP = {
         ("cascade", 5, {"PM7", "PM8", "PM9", "PM10"}),
     ],
 )
-def test_episode_proc_time_map_keys_match_route_chambers(
+def test_base_proc_time_map_keys_match_route_chambers(
     device_mode: str,
     route_code: int,
     expected_keys: set[str],
@@ -56,7 +56,7 @@ def test_episode_proc_time_map_keys_match_route_chambers(
         process_time_map=dict(FULL_PROCESS_TIME_MAP),
     )
     net = ClusterTool(config=cfg)
-    assert set(net._episode_proc_time_map.keys()) == expected_keys
+    assert set(net._base_proc_time_map.keys()) == expected_keys
 
 
 def test_route_code_string_is_normalized_to_int_for_cascade_route5():
@@ -70,7 +70,7 @@ def test_route_code_string_is_normalized_to_int_for_cascade_route5():
     net = ClusterTool(config=cfg)
     assert net.route_code == 5
     assert net.single_route_code == 5
-    assert set(net._episode_proc_time_map.keys()) == {"PM7", "PM8", "PM9", "PM10"}
+    assert set(net._base_proc_time_map.keys()) == {"PM7", "PM8", "PM9", "PM10"}
 
 
 def test_invalid_device_mode_raises_value_error():
@@ -689,7 +689,7 @@ def test_cascade_route5_filters_full_process_time_map_to_route_chambers():
         process_time_map=dict(FULL_PROCESS_TIME_MAP),
     )
     net = ClusterTool(config=cfg)
-    assert set(net._episode_proc_time_map.keys()) == {"PM7", "PM8", "PM9", "PM10"}
+    assert set(net._base_proc_time_map.keys()) == {"PM7", "PM8", "PM9", "PM10"}
 
 
 def test_cascade_route5_takt_input_contains_only_two_route_stages(monkeypatch):

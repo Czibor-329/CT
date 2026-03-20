@@ -115,7 +115,7 @@ class BasedToken:
   - `2`：Dual Arm（双臂）
 - 单设备清洗与腔室配置：支持全局扁平字段或腔室集成块 `chambers`。
   - **扁平方式**：`cleaning_enabled`、`cleaning_targets`、`cleaning_trigger_wafers`、`cleaning_duration`；所有在 `cleaning_targets` 内的腔室共用同一触发次数与清洁时长。
-  - **腔室集成方式**：在配置中提供 `chambers`，每腔室可配置 `process_time`、`cleaning_duration`、`cleaning_trigger_wafers`、`proc_rand_scale`。`proc_rand_scale` 为单值，如 `0.3` 表示工序时间随机范围为 70%~130%（即 `[1-0.3, 1+0.3]`）。若提供 `chambers`，会生成/覆盖 `process_time_map`、`cleaning_trigger_wafers_map`、`cleaning_duration_map`、`proc_time_rand_scale_map`。
+  - **腔室集成方式**：在配置中提供 `chambers`，每腔室可配置 `process_time`、`cleaning_duration`、`cleaning_trigger_wafers`。若提供 `chambers`，会生成/覆盖 `process_time_map`、`cleaning_trigger_wafers_map`、`cleaning_duration_map`。
   - ClusterTool 内部使用 `_cleaning_trigger_map`、`_cleaning_duration_map`（per-chamber）；构网时通过 `obs_config` 将上述 map 传给 `build_single_device_net`，每个 PM 实例获得对应腔室的清洁参数。
 
 **工艺路线**
@@ -140,7 +140,7 @@ class BasedToken:
 - `get_action_mask(wait_action_start=None, n_actions=None) -> np.ndarray`：返回完整离散动作掩码（`transition + wait`）。使能与 wait 规则在此统一完成；实现为判定每个 transition/wait 使能时直接写 `mask[idx]=True`，不先生成动作 id 列表再写入。
 - `Env_PN_Single`：`eval_mode=True` 时仍启用 `detailed_reward` 与 `net.eval()`；动作合法性仅通过 TensorDict 的 `action_mask`（及 `ClusterTool.step` 返回值中的 mask）表达，不在环境上缓存逐步使能列表。
 - `step(a1=None, detailed_reward=False, wait_duration=None)`：执行单步并返回 `(done, reward_result, scrap, action_mask)`（动作校验 -> 发射/等待 -> 时间推进 -> 奖励 -> mask）；`advance_time()` 内会同步完成 `scrap/qtime` 状态扫描，减少重复 token 遍历。补充：非 WAIT 路径下，若本步 `u_*` 已取走与 `scrap_info` 同 `token_id` 且同源腔室的 resident wafer，则撤销本步 scrap（不终止、不追加 `scrap_penalty`）。
-- `get_next_event_delta() -> Optional[int]`：计算当前时刻到下一关键事件的时间差（秒）。通过扫描 `_token_pool` 按 token 所在库所（运输 d_TM* / 加工腔室）用不同规则计算；节拍为「下一节拍时刻 − 当前时间」。用于 wait 时截断推进量，避免跨过取片或发片决策点。
+- `get_next_event_delta() -> Optional[int]`：计算当前时刻到下一关键事件的时间差（秒）。通过扫描 `marks` 中运输位 d_TM* 与加工腔室的 token，用不同规则计算；节拍为「下一节拍时刻 − 当前时间」。用于 wait 时截断推进量，避免跨过取片或发片决策点。
 - `calc_reward(t1, t2, detailed=False)`：奖励计算（`detailed_reward=True` 时返回含 `total` 的字典）
 - `blame_release_violations() -> Dict[int, float]`：基于 `_chamber_timeline` 与 `fire_log` 中 `cleaning_start` 的单设备事后追责，输出 `fire_log_index -> penalty`
 - `get_step_profile_summary() -> Dict[str, Any]`：返回 step 分段耗时统计，含 `count`、`total_ms`、`avg_ms`、`steps_per_sec`，以及 `get_enable_t`（mask 计算）/ `fire` / `build_obs` / `reward` / `next_event_delta` / `advance_time` / `check_scrap` / `other` 的 `total_ms / avg_ms / ratio_pct`

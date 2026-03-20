@@ -28,7 +28,7 @@
 ## Interfaces
 - 单设备训练:
   - `python -m solutions.Continuous_model.train_single --device single --rollout-n-envs 1`
-  - 参数: `--device`, `--compute-device`, `--checkpoint`, `--proc-time-rand-enabled`, `--rollout-n-envs`
+  - 参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`
 - 并发训练:
   - `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
   - 参数: `--config`, `--checkpoint`

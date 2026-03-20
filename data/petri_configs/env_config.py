@@ -10,12 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 
-def _proc_rand_scale_to_min_max(scale: float) -> tuple:
-    """单值 proc_rand_scale 转 min/max，0.3 表示 [0.7, 1.3]。"""
-    scale = max(0.0, min(1.0, float(scale)))
-    return (1.0 - scale, 1.0 + scale)
-
-
 def _default_reward_config() -> Dict[str, int]:
     return {
         "proc_reward": 1,
@@ -36,14 +30,6 @@ def _default_single_process_time_map() -> Dict[str, int]:
         "PM3": 300,
         "PM4": 300,
         "PM6": 300,
-    }
-
-
-def _default_single_proc_time_rand_scale_map() -> Dict[str, Dict[str, float]]:
-    return {
-        "PM1": {"min": 1.0, "max": 1.0},
-        "PM3": {"min": 1.0, "max": 1.0},
-        "PM4": {"min": 1.0, "max": 1.0},
     }
 
 
@@ -125,17 +111,11 @@ class PetriEnvConfig:
     single_route_config_path: Optional[str] = None
     # single_route_config 下的 routes 选择名（为空则按 legacy alias/首条路线）
     single_route_name: Optional[str] = None
-    # 单设备工序时间随机扰动（按 episode 固定）
-    proc_rand_enabled: bool = False
-    # 单设备工序时间随机扰动区间（按腔室独立配置）
-    proc_time_rand_scale_map: Dict[str, Dict[str, float]] = field(
-        default_factory=_default_single_proc_time_rand_scale_map
-    )
     # 单设备 WAIT 动作档位（秒）
     wait_durations: List[int] = field(default_factory=_default_wait_durations)
 
-    # 腔室集成配置（可选）。若提供则覆盖/生成 process_time_map、清洁与随机映射
-    # 每腔室: process_time, cleaning_duration, cleaning_trigger_wafers, proc_rand_scale（0.3 表示 70%~130%）
+    # 腔室集成配置（可选）。若提供则覆盖/生成 process_time_map 与清洗映射
+    # 每腔室: process_time, cleaning_duration, cleaning_trigger_wafers
     chambers: Optional[Dict[str, Dict[str, Any]]] = None
     # 由 chambers 或扁平字段归一化得到的 per-chamber 映射（__post_init__ 中填充）
     cleaning_trigger_wafers_map: Optional[Dict[str, int]] = None
@@ -165,19 +145,13 @@ class PetriEnvConfig:
         """从 chambers 或扁平字段归一化出 cleaning_trigger_wafers_map、cleaning_duration_map 等。"""
         if self.chambers is not None:
             pt_map = dict(self.process_time_map)
-            rand_map = dict(self.proc_time_rand_scale_map)
             for name, spec in self.chambers.items():
                 if not isinstance(spec, dict):
                     continue
                 pt = spec.get("process_time")
                 if pt is not None:
                     pt_map[name] = int(pt)
-                scale = spec.get("proc_rand_scale")
-                if scale is not None:
-                    low, high = _proc_rand_scale_to_min_max(float(scale))
-                    rand_map[name] = {"min": low, "max": high}
             self.process_time_map = pt_map
-            self.proc_time_rand_scale_map = rand_map
             self.cleaning_trigger_wafers_map = {
                 name: max(0, int(spec.get("cleaning_trigger_wafers", 0)))
                 for name, spec in (self.chambers or {}).items()
@@ -366,8 +340,6 @@ class PetriEnvConfig:
             data["scrap_event_penalty"] = data["R_scrap"]
         if "idle_event_penalty" not in data and "idle_penalty" in data:
             data["idle_event_penalty"] = data["idle_penalty"]
-        if "proc_rand_enabled" not in data and "single_proc_time_rand_enabled" in data:
-            data["proc_rand_enabled"] = data["single_proc_time_rand_enabled"]
         # 列表/集合在 JSON 中为列表，需转换
         if "no_residence_place_names" in data and data["no_residence_place_names"] is not None:
             data["no_residence_place_names"] = set(data["no_residence_place_names"])

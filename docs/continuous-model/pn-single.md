@@ -28,11 +28,11 @@
 ## Interfaces
 - 环境接口:
   - 类: `solutions.Continuous_model.env_single.Env_PN_Single`
-  - 关键参数: `device_mode`, `robot_capacity`, `route_code`, `proc_time_rand_enabled`
+  - 关键参数: `device_mode`, `robot_capacity`, `route_code`, `process_time_map`（可选）
   - 配置驱动参数（可选）: `single_route_config`, `single_route_config_path`, `single_route_name`
 - 训练入口:
   - `python -m solutions.Continuous_model.train_single --device single --rollout-n-envs 1`
-  - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--proc-time-rand-enabled`, `--rollout-n-envs`
+  - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`
 - 推理导出入口:
   - `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`
   - 当前 action sequence 输出固定为 `seq/tmp.json`
@@ -49,7 +49,7 @@
 5. 导出脚本的 `--out-name` 当前不参与文件命名，仅保留兼容。
 6. `check_release_penalty.py` 未设置 `--sequence` 时不能执行。
 7. 旧观测分支（place-obs）不再作为当前实现接口。
-8. 配置驱动路径启用时，所选 `route.sequence` 中 stage 级 `process_time/cleaning_*` 会在 `pn_single` 侧先覆盖 `process_time_map/cleaning_*_map`，再进入 `_preprocess_process_time_map`；因此最终工时以 route stage 为准（仍按系统口径取整到 5 的倍数）。
+8. 配置驱动路径启用时，所选 `route.sequence` 中 stage 级 `process_time/cleaning_*` 会在 `pn_single` 侧先合并进传入构网的 `process_time_map`/清洗映射；工序时长默认与取整到 5 秒在 `construct_single.build_single_device_net`（`preprocess_process_time_map_for_single_net`）内完成，构网返回值中的 `process_time_map` 与 `marks`/`ptime` 一致，`ClusterTool._base_proc_time_map` 直接取自该字段。
 9. `u_*` 使能在按 `route_queue` 推断到 `route_target` 时，仍必须满足目标库所可接收（未清洗且未满）；不满足时该分支必须退化为“无目标/不可使能”。
 10. 级联观测中 `TM2/TM3` 的目标 one-hot 采用固定 8 维逐目标编码（不再按目标组压缩）；`LLC/LLD` 观测由 4 维扩展为 6 维，新增 `in/out` 两维方向 one-hot（下一跳由 `TM3` 搬运记为 `in`，由 `TM2` 搬运记为 `out`）。
 11. `PetriEnvConfig.llc_tm3_takt_interval > 0` 时，对构网得到的 **LLC→`d_TM3`** 释放变迁（`("LLC","d_TM3")` 对应的 `u_*`）施加节拍门控：口径与 `u_LP` 的 `_takt_required_interval` 一致（**首次发射不因节拍被禁**，第二次起按 `build_fixed_takt_result(interval)` 的 `cycle_takts` 取最小间隔）；`<=0` 为默认关闭。门控同步作用于 `get_action_mask` 与 `get_next_event_delta`。
@@ -73,6 +73,9 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-20: 移除单设备「按 episode 随机缩放工序时长」能力：删除 `PetriEnvConfig.proc_rand_enabled`、`proc_time_rand_scale_map`、`chambers[].proc_rand_scale` 与 route stage `proc_rand_scale`；`train_single` 去掉 `--proc-time-rand-enabled`。
+- 2026-03-20: 删除 `_episode_proc_time_map` 及 `_refresh_episode_proc_time`、`_validate_episode_proc_time_map_consistency`、`_align_base_proc_time_map_with_route_chambers`；节拍与导出统一读 `_base_proc_time_map`（来自构网返回的 `process_time_map`）；工序预处理迁入 `construct_single.py`，`pn_single` 不再含 `_preprocess_process_time_map` / `_apply_base_proc_times_to_marks_and_ptime`。
+- 2026-03-20: 移除 `ClusterTool._rebuild_token_pool` / `_token_pool`；驻留 scrap 扫描改为遍历 `marks` 中腔室 token；删除无引用的 `_token_remaining_time`。
 - 2026-03-20: 移除环境使能侧车与使能导出：`Env_PN_Single` 不再维护 `_last_action_enable_info`；`export_inference_sequence.py` 不再写入 `results/eval_logs.*`，CLI 去掉 `--results-dir`；可视化 verbose 仅打印步摘要。
 - 2026-03-20: 移除 `ClusterTool.get_enable_actions_with_reasons` 及仅其使用的 `_has_ready_chamber_wafers`、`_is_process_ready`；使能以 `get_action_mask` 为准。
 - 2026-03-20: 移除 `ClusterTool._get_enable_t`：`reset()` 第二返回值改为由 `get_action_mask` 前 `T` 维派生，使能变迁以 mask 为单一实现来源。

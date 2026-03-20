@@ -410,8 +410,6 @@ def train_single(
     config: PPOTrainingConfig | None = None,
     checkpoint_path: str | None = None,
     device_mode: str = "single",
-    proc_time_rand_enabled: bool | None = None,
-    proc_time_rand_scale_map: dict[str, dict[str, float]] | None = None,
     rollout_n_envs: int = 1,
 ):
     assert config is not None, "training config must be provided"
@@ -444,8 +442,6 @@ def train_single(
         device="cpu",
         detailed_reward=True,
         device_mode=device_mode,
-        proc_time_rand_enabled=proc_time_rand_enabled,
-        proc_time_rand_scale_map=proc_time_rand_scale_map,
     )
     # 仅保留 ultra 模式：rollout 固定在 CPU。
     rollout_device = "cpu"
@@ -531,8 +527,6 @@ def train_single(
                 device="cpu",
                 detailed_reward=True,
                 device_mode=device_mode,
-                proc_time_rand_enabled=proc_time_rand_enabled,
-                proc_time_rand_scale_map=proc_time_rand_scale_map,
             ),
             policy=policy_for_rollout,
             n_steps=steps_per_env,
@@ -726,7 +720,6 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="single", choices=["single", "cascade"], help="设备模式（single/cascade）")
     parser.add_argument("--compute-device", type=str, default=None, help="计算设备：cpu / cuda / cuda:0；未指定时：有 CUDA 则用 cuda，否则用配置文件中的 device")
     parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint 路径")
-    parser.add_argument("--proc-time-rand-enabled", action="store_true", help="开启单设备工序时间随机扰动")
     parser.add_argument("--rollout-n-envs", type=int, default=1, help="ultra collector 并行环境数")
     args = parser.parse_args()
 
@@ -747,6 +740,5 @@ if __name__ == "__main__":
         config=cfg,
         checkpoint_path=checkpoint_path,
         device_mode=args.device,
-        proc_time_rand_enabled=True if args.proc_time_rand_enabled else None,
         rollout_n_envs=args.rollout_n_envs,
     )

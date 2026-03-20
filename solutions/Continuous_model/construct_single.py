@@ -13,9 +13,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 import numpy as np
 
 from solutions.Continuous_model.construct import BasedToken
+from solutions.Continuous_model.helper_function import _preprocess_process_time_map as _hf_preprocess_process_time_map
 from solutions.Continuous_model.pn import LL, PM, Place, SR, TM
 from solutions.Continuous_model.route_compiler_single import (
     RobotSpec as CompiledRobotSpec,
+    RouteIR,
     TokenRoutePlan,
     build_route_meta_from_route_ir,
     build_token_route_plan,
@@ -295,6 +297,107 @@ def parse_route(
     }
 
 
+def _legacy_chambers_for_preprocess(mode: str, route_code: int) -> Tuple[str, ...]:
+    """与 legacy 构网一致的 chambers（不含 buffer stage），供工序 map 预处理。"""
+    key = (str(mode).lower(), int(route_code))
+    stages = ROUTE_SPECS.get(key)
+    if stages is None:
+        stages = ROUTE_SPECS.get((key[0], 1 if key[0] == "cascade" else 0))
+        if stages is None:
+            stages = ROUTE_SPECS[("single", 0)]
+    meta = parse_route(list(stages), BUFFER_NAMES)
+    if key[0] == "cascade" and int(route_code) == 4:
+        meta["u_targets"]["LLD"] = ["PM7", "LP_done"]
+    return tuple(meta["chambers"])
+
+
+def _route_ir_preprocess_chambers(
+    route_ir: RouteIR,
+    source_name: str,
+    sink_name: str,
+) -> Tuple[str, ...]:
+    """配置驱动：与 pn_single 一致，跳过 buffer stage 的 candidates（如 LLC）。"""
+    names: List[str] = []
+    for stage in route_ir.stages[1:-1]:
+        if str(stage.stage_type) == "buffer":
+            continue
+        for chamber_name in stage.candidates:
+            if chamber_name in {source_name, sink_name}:
+                continue
+            if chamber_name not in names:
+                names.append(chamber_name)
+    return tuple(names)
+
+
+def preprocess_process_time_map_for_single_net(
+    process_time_map: Mapping[str, int],
+    chambers: Tuple[str, ...],
+    device_mode: str,
+    route_code: int,
+    route_config: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, int]:
+    """
+    按腔室清单对工序时长做默认填充与取整到 5 秒（与 helper_function 一致）。
+    chambers 不含 buffer 库所（如 LLC）时，后者不走本预处理。
+    """
+    raw = dict(process_time_map)
+    mode = str(device_mode).lower()
+    rc = int(route_code)
+
+    if route_config is not None:
+        cfg_ch = dict(route_config.get("chambers") or {})
+        defaults = {
+            name: int((spec or {}).get("process_time", 0))
+            for name, spec in cfg_ch.items()
+            if name in chambers
+        }
+        missing = sorted(c for c in chambers if c not in raw and c not in defaults)
+        if missing:
+            raise ValueError(
+                "missing default process times for chambers: "
+                f"{missing}; device_mode={mode!r}, route_code={rc!r}"
+            )
+        return dict(_hf_preprocess_process_time_map(raw, chambers, defaults))
+
+    if mode == "cascade":
+        if rc == 4:
+            defaults = {
+                "PM7": 70,
+                "PM8": 70,
+                "LLD": 70,
+            }
+        elif rc == 5:
+            defaults = {
+                "PM7": 70,
+                "PM8": 70,
+                "PM9": 200,
+                "PM10": 200,
+            }
+        else:
+            pm_stage3_default = 600 if rc == 1 else 300
+            defaults = {
+                "PM7": 70,
+                "PM8": 70,
+                "PM1": pm_stage3_default,
+                "PM2": pm_stage3_default,
+                "LLD": 70,
+            }
+            if rc != 3:
+                defaults.update({"PM9": 200, "PM10": 200})
+            if rc == 1:
+                defaults.update({"PM3": pm_stage3_default, "PM4": pm_stage3_default})
+    else:
+        defaults = {"PM1": 100, "PM3": 300, "PM4": 300, "PM6": 300}
+
+    missing = sorted(c for c in chambers if c not in raw and c not in defaults)
+    if missing:
+        raise ValueError(
+            "missing default process times for chambers: "
+            f"{missing}; device_mode={mode!r}, route_code={rc!r}"
+        )
+    return dict(_hf_preprocess_process_time_map(raw, chambers, defaults))
+
+
 def _build_pre_color_from_route_queue(
     pre: np.ndarray,
     id2t_name: List[str],
@@ -418,7 +521,6 @@ def _legacy_route_config(
             "capacity": 1,
             "cleaning_duration": 0,
             "cleaning_trigger_wafers": 0,
-            "proc_rand_scale": 0.0,
         }
 
     if mode == "cascade":
@@ -536,7 +638,6 @@ def _build_single_device_net_from_route_config(
     route_stage_proc_time: Dict[str, int] = {}
     route_stage_clean_dur: Dict[str, int] = {}
     route_stage_clean_trig: Dict[str, int] = {}
-    route_stage_rand_scale: Dict[str, float] = {}
 
     def _set_consistent_int(target: Dict[str, int], name: str, value: int, field_name: str) -> None:
         if name in target and int(target[name]) != int(value):
@@ -545,14 +646,6 @@ def _build_single_device_net_from_route_config(
                 f"{target[name]} vs {value}"
             )
         target[name] = int(value)
-
-    def _set_consistent_float(target: Dict[str, float], name: str, value: float, field_name: str) -> None:
-        if name in target and float(target[name]) != float(value):
-            raise ValueError(
-                f"route {selected_route_name} has conflicting {field_name} for {name}: "
-                f"{target[name]} vs {value}"
-            )
-        target[name] = float(value)
 
     for stage in route_ir.stages:
         is_process_stage = str(stage.stage_type) == "process"
@@ -583,13 +676,17 @@ def _build_single_device_net_from_route_config(
                     int(stage.stage_cleaning_trigger_wafers),
                     "cleaning_trigger_wafers",
                 )
-            if stage.stage_proc_rand_scale is not None:
-                _set_consistent_float(
-                    route_stage_rand_scale,
-                    chamber_name,
-                    float(stage.stage_proc_rand_scale),
-                    "proc_rand_scale",
-                )
+
+    ch_pre = _route_ir_preprocess_chambers(route_ir, source_name, sink_name)
+    merged_for_preprocess: Dict[str, int] = dict(process_time_map)
+    merged_for_preprocess.update(route_stage_proc_time)
+    processed_pt = preprocess_process_time_map_for_single_net(
+        merged_for_preprocess,
+        ch_pre,
+        mode,
+        int(route_code),
+        route_config,
+    )
 
     # Place 顺序：source -> route 中出现的 chambers -> sink -> transport places
     id2p_name: List[str] = []
@@ -697,12 +794,15 @@ def _build_single_device_net_from_route_config(
             )
             continue
         c_cfg = dict(chambers_cfg.get(name) or {})
-        ptime = int(
-            route_stage_proc_time.get(
-                name,
-                process_time_map.get(name, c_cfg.get("process_time", 0)),
+        if name in processed_pt:
+            ptime = int(processed_pt[name])
+        else:
+            ptime = int(
+                route_stage_proc_time.get(
+                    name,
+                    process_time_map.get(name, c_cfg.get("process_time", 0)),
+                )
             )
-        )
         modules[name] = SingleModuleSpec(
             tokens=0,
             ptime=ptime,
@@ -831,6 +931,8 @@ def _build_single_device_net_from_route_config(
         marks.append(place)
 
     route_meta = build_route_meta_from_route_ir(route_ir, buffer_names=buffer_names or BUFFER_NAMES)
+    rm_ch = tuple(route_meta.get("chambers", ()))
+    process_time_map_out = {n: int(modules[n].ptime) for n in rm_ch if n in modules}
 
     pre_place_indices: List[np.ndarray] = [np.flatnonzero(pre[:, t] > 0) for t in range(t_count)]
     pst_place_indices: List[np.ndarray] = [np.flatnonzero(pst[:, t] > 0) for t in range(t_count)]
@@ -868,6 +970,7 @@ def _build_single_device_net_from_route_config(
         "token_route_queue_template": token_route_queue,
         "token_route_plan_template": token_plan,
         "route_ir": route_ir,
+        "process_time_map": process_time_map_out,
     }
 
 
@@ -910,28 +1013,33 @@ def build_single_device_net(
     - pre_place_indices: List[np.ndarray]，pre_place_indices[t] 为变迁 t 的前置库所下标
     - pst_place_indices: List[np.ndarray]，pst_place_indices[t] 为变迁 t 的后置库所下标
     - transport_pre_place_idx: List[int]，transport_pre_place_idx[t] 为变迁 t 的运输位前置库所下标（无则为 -1）
+    - process_time_map: Dict[str, int]，与 route_meta["chambers"] 一致的腔室工序时长（已含默认填充与取整到 5 秒）
     """
     mode = str(device_mode).lower()
     if mode not in {"single", "cascade"}:
         mode = "single"
     robot_capacity = 2 if int(robot_capacity) == 2 else 1
-    process_time_map = process_time_map or {}
+    raw_pm = dict(process_time_map or {})
     route_code = int(route_code)
     if route_config is not None:
         return _build_single_device_net_from_route_config(
             n_wafer=n_wafer,
             ttime=ttime,
             robot_capacity=robot_capacity,
-            process_time_map=process_time_map,
+            process_time_map=raw_pm,
             route_code=route_code,
             device_mode=mode,
             obs_config=obs_config,
             route_config=route_config,
             route_name=route_name,
         )
+    if mode == "cascade" and route_code not in {1, 2, 3, 4, 5}:
+        route_code = 1
+    ch_legacy = _legacy_chambers_for_preprocess(mode, route_code)
+    process_time_map = preprocess_process_time_map_for_single_net(
+        raw_pm, ch_legacy, mode, route_code, None
+    )
     if mode == "cascade":
-        if route_code not in {1, 2, 3, 4, 5}:
-            route_code = 1
         pm_stage1 = int(process_time_map.get("PM7", 70))
         lld_time = int(process_time_map.get("LLD", 70))
         pm_stage5 = int(process_time_map.get("PM9", 200))
@@ -1332,6 +1440,11 @@ def build_single_device_net(
         )
         transport_pre_place_idx.append(int(found))
 
+    rm_ch_legacy = tuple(route_meta.get("chambers", ()))
+    process_time_map_legacy = {
+        n: int(modules[n].ptime) for n in rm_ch_legacy if n in modules
+    }
+
     return {
         "m0": m0,
         "md": md,
@@ -1356,4 +1469,5 @@ def build_single_device_net(
         "route_meta": route_meta,
         "t_route_code_map": t_route_code_map,
         "token_route_queue_template": token_route_queue,
+        "process_time_map": process_time_map_legacy,
     }

@@ -88,8 +88,6 @@ class Env_PN_Single(EnvBase):
         single_route_config: Optional[Dict[str, Any]] = None,
         single_route_name: Optional[str] = None,
         process_time_map: Optional[Dict[str, int]] = None,
-        proc_time_rand_enabled: Optional[bool] = None,
-        proc_time_rand_scale_map: Optional[Dict[str, Dict[str, float]]] = None,
         detailed_reward: bool = False,  # 已弃用，保留以兼容旧调用，不再使用
     ):
         super().__init__(device=device)
@@ -114,13 +112,6 @@ class Env_PN_Single(EnvBase):
         if process_time_map is not None:
             config.process_time_map = {
                 str(chamber): int(value) for chamber, value in dict(process_time_map).items()
-            }
-        if proc_time_rand_enabled is not None:
-            config.proc_rand_enabled = bool(proc_time_rand_enabled)
-        if proc_time_rand_scale_map is not None:
-            config.proc_time_rand_scale_map = {
-                str(chamber): {"min": float(bounds.get("min", 1.0)), "max": float(bounds.get("max", 1.0))}
-                for chamber, bounds in dict(proc_time_rand_scale_map).items()
             }
 
         self.net = ClusterTool(config=config)

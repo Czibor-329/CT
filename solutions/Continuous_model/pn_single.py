@@ -6,11 +6,7 @@ from collections import deque
 from time import perf_counter
 from typing import Any, Deque, Dict, List, Mapping, Optional, Set, Tuple
 from pathlib import Path
-from solutions.Continuous_model.helper_function import (
-    _normalize_wait_durations,
-    _preprocess_process_time_map,
-    _round_to_nearest_five,
-)
+from solutions.Continuous_model.helper_function import _normalize_wait_durations
 
 import numpy as np
 try:
@@ -201,7 +197,7 @@ class ClusterTool:
     def _extract_route_stage_overrides(
         route_cfg: Mapping[str, Any],
         route_name: str,
-    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int], Dict[str, float]]:
+    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
         source_name = str((route_cfg.get("source") or {}).get("name", "LP"))
         sink_name = str((route_cfg.get("sink") or {}).get("name", "LP_done"))
         cfg_chambers = dict(route_cfg.get("chambers") or {})
@@ -222,7 +218,6 @@ class ClusterTool:
         proc_time_map: Dict[str, int] = {}
         cleaning_duration_map: Dict[str, int] = {}
         cleaning_trigger_map: Dict[str, int] = {}
-        proc_rand_scale_map: Dict[str, float] = {}
 
         def _set_consistent_int(
             target: Dict[str, int],
@@ -237,20 +232,6 @@ class ClusterTool:
                     f"{old} vs {value}"
                 )
             target[chamber_name] = int(value)
-
-        def _set_consistent_float(
-            target: Dict[str, float],
-            chamber_name: str,
-            value: float,
-            field_name: str,
-        ) -> None:
-            old = target.get(chamber_name)
-            if old is not None and float(old) != float(value):
-                raise ValueError(
-                    f"route {route_name} has conflicting {field_name} for {chamber_name}: "
-                    f"{old} vs {value}"
-                )
-            target[chamber_name] = float(value)
 
         for stage in normalized:
             is_process_stage = str(stage.stage_type) == "process"
@@ -280,19 +261,11 @@ class ClusterTool:
                         int(stage.stage_cleaning_trigger_wafers),
                         "cleaning_trigger_wafers",
                     )
-                if stage.stage_proc_rand_scale is not None:
-                    _set_consistent_float(
-                        proc_rand_scale_map,
-                        chamber_name,
-                        float(stage.stage_proc_rand_scale),
-                        "proc_rand_scale",
-                    )
 
         return (
             proc_time_map,
             cleaning_duration_map,
             cleaning_trigger_map,
-            proc_rand_scale_map,
         )
 
     def __init__(self, config: PetriEnvConfig = None) -> None:
@@ -355,7 +328,6 @@ class ClusterTool:
         self._route_stage_proc_time_map: Dict[str, int] = {}
         self._route_stage_cleaning_duration_map: Dict[str, int] = {}
         self._route_stage_cleaning_trigger_map: Dict[str, int] = {}
-        self._route_stage_proc_rand_scale_map: Dict[str, float] = {}
         if self.single_route_config is not None:
             self._selected_single_route_name = self._resolve_route_name_from_config(
                 route_cfg=dict(self.single_route_config or {}),
@@ -368,7 +340,6 @@ class ClusterTool:
                     self._route_stage_proc_time_map,
                     self._route_stage_cleaning_duration_map,
                     self._route_stage_cleaning_trigger_map,
-                    self._route_stage_proc_rand_scale_map,
                 ) = self._extract_route_stage_overrides(
                     route_cfg=dict(self.single_route_config or {}),
                     route_name=self._selected_single_route_name,
@@ -450,8 +421,6 @@ class ClusterTool:
             self._ready_chambers = self.chambers
             self._single_process_chambers = self.chambers
 
-        self.proc_rand_enabled = bool(config.proc_rand_enabled)
-        self._proc_rand_scale_map = dict(config.proc_time_rand_scale_map or {})
         raw = dict(config.process_time_map or {})
         if self.single_route_config is not None:
             if self._route_stage_proc_time_map:
@@ -460,15 +429,6 @@ class ClusterTool:
                 self._cleaning_duration_map.update(self._route_stage_cleaning_duration_map)
             if self._route_stage_cleaning_trigger_map:
                 self._cleaning_trigger_map.update(self._route_stage_cleaning_trigger_map)
-            for chamber_name, scale in self._route_stage_proc_rand_scale_map.items():
-                clipped = max(0.0, min(1.0, float(scale)))
-                self._proc_rand_scale_map[chamber_name] = {
-                    "min": 1.0 - clipped,
-                    "max": 1.0 + clipped,
-                }
-        self._base_proc_time_map = self._preprocess_process_time_map(raw)
-        self._episode_proc_time_map: Dict[str, int] = {}
-
         obs_config = {
             "P_Residual_time": self.P_Residual_time,
             "D_Residual_time": self.D_Residual_time,
@@ -482,13 +442,14 @@ class ClusterTool:
             n_wafer=self.n_wafer,
             ttime=max(1, self.T_transport),
             robot_capacity=self.robot_capacity,
-            process_time_map=self._base_proc_time_map,
+            process_time_map=raw,
             route_code=self.route_code,
             device_mode=self.device_mode,
             obs_config=obs_config,
             route_config=self.single_route_config,
             route_name=self._selected_single_route_name or self.single_route_name,
         )
+        self._base_proc_time_map = dict(info.get("process_time_map") or {})
         route_meta = dict(info.get("route_meta") or {})
         if not self._route_stages:
             # 从 route_meta 反推用于节拍分析的内部阶段（不含 LP/LP_done）
@@ -559,15 +520,14 @@ class ClusterTool:
                 )
                 self._transport_pre_place_idx.append(found)
 
-        self.ori_marks: List[Place] = info["marks"]
-        self.marks: List[Place] = self._clone_marks(self.ori_marks)
-        self._align_base_proc_time_map_with_route_chambers()
+        self.marks: List[Place] = self._clone_marks(info["marks"])
         # 临时执行策略：除 LP/LP_done 外全部按 unit-capacity 运行。
         for idx, p in enumerate(self.marks):
             if p.name not in {"LP", "LP_done"}:
                 p.capacity = 1
                 self.k[idx] = 1
-        self._refresh_episode_proc_time()
+
+        self.ori_marks = self._clone_marks(self.marks)
 
         self.time = 0
         self.idle_timeout = max((p.processing_time for p in self.marks), default=0) + 50
@@ -592,7 +552,6 @@ class ClusterTool:
         self._u_transition_by_source: Dict[str, int] = {}
         self._u_transition_by_source_transport: Dict[Tuple[str, str], int] = {}
         self._t_transitions_by_transport: Dict[str, List[int]] = {}
-        self._token_pool: List[BasedToken] = []
         if self.device_mode == "cascade":
             if self.single_route_config is not None:
                 for source, targets in self._u_targets.items():
@@ -665,7 +624,6 @@ class ClusterTool:
         self._rebuild_place_cache()
         self._init_obs_cache()
         self._build_transition_index()
-        self._rebuild_token_pool()
         if not self._training:
             print(self._takt_result)
 
@@ -814,7 +772,6 @@ class ClusterTool:
 
     def reset(self):
         self.marks = self._clone_marks(self.ori_marks)
-        self._refresh_episode_proc_time()
         self._rebuild_place_cache()
         self._init_obs_cache()
         self.time = 0
@@ -859,7 +816,6 @@ class ClusterTool:
                 p.capacity = 1
                 self.k[idx] = 1
         self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
-        self._rebuild_token_pool()
         self._last_state_scan = {}
         T = int(self.T)
         mask = self.get_action_mask(wait_action_start=T, n_actions=T + len(self.wait_durations))
@@ -1479,20 +1435,6 @@ class ClusterTool:
                 self._t_transitions_by_transport.setdefault(transport, []).append(int(t_idx))
         self._llc_tm3_u_idx = self._u_transition_by_source_transport.get(("LLC", "d_TM3"))
 
-    def _rebuild_token_pool(self) -> None:
-        pool: List[BasedToken] = []
-        for place_idx, place in enumerate(self.marks):
-            for tok in place.tokens:
-                tok._place_idx = place_idx
-                pool.append(tok)
-        self._token_pool = pool
-
-    def _token_remaining_time(self, tok: BasedToken, place_idx: int) -> int:
-        place = self.marks[place_idx]
-        if place.type in (CHAMBER, 5, DELIVERY_ROBOT):
-            return place.processing_time - tok.stay_time
-        return 0
-
     def _transition_structurally_enabled(self, t_idx: int) -> bool:
         m = self.m; pre = self.pre; net = self.net; k = self.k
         # 数值核心优先走 numba（可选），失败时退回原路径。
@@ -1568,127 +1510,6 @@ class ClusterTool:
             },
         }
 
-    def _refresh_episode_proc_time(self) -> None:
-        """生成本 episode 工序时长（随机+取整到5）并应用到 marks 与 ptime。"""
-        if self.proc_rand_enabled:
-            sampled: Dict[str, int] = {}
-            for chamber in self.chambers:
-                raw = self._proc_rand_scale_map.get(chamber, {})
-                if not isinstance(raw, dict):
-                    raw = {}
-                low = float(raw.get("min", 1.0))
-                high = float(raw.get("max", 1.0))
-                base_time = float(self._base_proc_time_map[chamber])
-                sampled_time = base_time * float(np.random.uniform(low, high))
-                sampled[chamber] = _round_to_nearest_five(sampled_time)
-            self._episode_proc_time_map = sampled
-        else:
-            self._episode_proc_time_map = dict(self._base_proc_time_map)
-        self._validate_episode_proc_time_map_consistency()
-        for p in self.marks:
-            if p.name in self._episode_proc_time_map:
-                p.processing_time = int(self._episode_proc_time_map[p.name])
-        for chamber_name, proc_time in self._episode_proc_time_map.items():
-            p_idx = self._get_place_index(chamber_name)
-            self.ptime[p_idx] = int(proc_time)
-
-    def _validate_episode_proc_time_map_consistency(self) -> None:
-        expected = set(self.chambers)
-        actual = set(self._episode_proc_time_map.keys())
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        if not missing and not extra:
-            return
-        raise ValueError(
-            "episode process time map is inconsistent with route chambers: "
-            f"device_mode={self.device_mode!r}, route_code={self.route_code!r}, "
-            f"missing={missing}, extra={extra}, "
-            f"expected={sorted(expected)}, actual={sorted(actual)}"
-        )
-
-    def _align_base_proc_time_map_with_route_chambers(self) -> None:
-        """
-        配置驱动下 route_meta 与预处理口径可能暂时不一致（如 mixed stage: LLC/LLD），
-        这里按已构网 place 工时补齐缺失键，保证 episode map 与 route chambers 一致。
-        """
-        missing = [name for name in self.chambers if name not in self._base_proc_time_map]
-        if not missing:
-            return
-        for chamber_name in missing:
-            if chamber_name not in self.id2p_name:
-                continue
-            p_idx = self._get_place_index(chamber_name)
-            self._base_proc_time_map[chamber_name] = int(self.ptime[p_idx])
-
-    def _preprocess_process_time_map(self, process_time_map: Dict[str, int]) -> Dict[str, int]:
-        if getattr(self, "single_route_config", None) is not None:
-            cfg_chambers = dict((self.single_route_config or {}).get("chambers") or {})
-            defaults = {
-                name: int((spec or {}).get("process_time", 0))
-                for name, spec in cfg_chambers.items()
-                if name in self.chambers
-            }
-            missing_defaults = sorted(
-                chamber
-                for chamber in self.chambers
-                if chamber not in process_time_map and chamber not in defaults
-            )
-            if missing_defaults:
-                raise ValueError(
-                    "missing default process times for chambers: "
-                    f"{missing_defaults}; device_mode={self.device_mode!r}, route_code={self.route_code!r}"
-                )
-            return _preprocess_process_time_map(
-                process_time_map=process_time_map,
-                chambers=self.chambers,
-                defaults=defaults,
-            )
-
-        if self.device_mode == "cascade":
-            if self.route_code == 4:
-                defaults = {
-                    "PM7": 70,
-                    "PM8": 70,
-                    "LLD": 70,
-                }
-            elif self.route_code == 5:
-                defaults = {
-                    "PM7": 70,
-                    "PM8": 70,
-                    "PM9": 200,
-                    "PM10": 200,
-                }
-            else:
-                pm_stage3_default = 600 if self.route_code == 1 else 300
-                defaults = {
-                    "PM7": 70,
-                    "PM8": 70,
-                    "PM1": pm_stage3_default,
-                    "PM2": pm_stage3_default,
-                    "LLD": 70,
-                }
-                if self.route_code != 3:
-                    defaults.update({"PM9": 200, "PM10": 200})
-                if self.route_code == 1:
-                    defaults.update({"PM3": pm_stage3_default, "PM4": pm_stage3_default})
-        else:
-            defaults = {"PM1": 100, "PM3": 300, "PM4": 300, "PM6": 300}
-        missing_defaults = sorted(
-            chamber
-            for chamber in self.chambers
-            if chamber not in process_time_map and chamber not in defaults
-        )
-        if missing_defaults:
-            raise ValueError(
-                "missing default process times for chambers: "
-                f"{missing_defaults}; device_mode={self.device_mode!r}, route_code={self.route_code!r}"
-            )
-        return _preprocess_process_time_map(
-            process_time_map=process_time_map,
-            chambers=self.chambers,
-            defaults=defaults,
-        )
-
     # 节拍分析器内部会统一给每道工序 p 加运输时间常量（当前口径为 +20）
     _TRANSPORT_TIME_FOR_TAKT: int = 20
 
@@ -1701,11 +1522,11 @@ class ClusterTool:
         valid_places = [
             place
             for place in stage_places
-            if int(self._episode_proc_time_map.get(place, 0) or 0) > 0
+            if int(self._base_proc_time_map.get(place, 0) or 0) > 0
         ]
         if not valid_places:
             return None
-        base_p = max(int(self._episode_proc_time_map[place]) for place in valid_places)
+        base_p = max(int(self._base_proc_time_map[place]) for place in valid_places)
         q: Optional[int] = None
         d = 0
         if self.cleaning_enabled:
@@ -1715,7 +1536,7 @@ class ClusterTool:
                 if trigger <= 0:
                     continue
                 duration = int(self._cleaning_duration_map.get(place, self.cleaning_duration))
-                score = int(self._episode_proc_time_map.get(place, 0)) + duration
+                score = int(self._base_proc_time_map.get(place, 0)) + duration
                 cleaning_candidates.append((score, trigger, duration, place))
             if cleaning_candidates:
                 _, q, d, _ = max(cleaning_candidates, key=lambda item: (item[0], item[3]))
@@ -1746,7 +1567,7 @@ class ClusterTool:
                 f"route_code={self.route_code!r}, stages={stage_details}"
             )
 
-        proc_places = set(self._episode_proc_time_map.keys())
+        proc_places = set(self._base_proc_time_map.keys())
         out_of_stage_proc_places = sorted(proc_places - stage_place_set)
         if out_of_stage_proc_places:
             raise ValueError(
@@ -1839,7 +1660,7 @@ class ClusterTool:
     def get_next_event_delta(self) -> Optional[int]:
         """
         计算当前时刻到下一个关键事件的时间差（秒）。
-        遍历 marks 而非 _token_pool，避免 _place_idx 反查开销。
+        遍历 marks 中运输位与加工腔室的 token。
         """
         best = None
         t_transport = self.T_transport
@@ -2025,24 +1846,21 @@ class ClusterTool:
         return True
 
     def _check_scrap(self) -> tuple[bool, Optional[Dict[str, Any]]]:
-        for tok in self._token_pool:
-            place_idx = tok._place_idx
-            if place_idx < 0 or place_idx >= len(self.marks):
-                continue
-            p = self.marks[place_idx]
+        for p in self.marks:
             if p.type != CHAMBER:
                 continue
-            remaining = p.processing_time - tok.stay_time
-            if remaining < -self.P_Residual_time:
-                overtime = -remaining - self.P_Residual_time
-                return True, {
-                    "token_id": tok.token_id,
-                    "place": p.name,
-                    "stay_time": tok.stay_time,
-                    "proc_time": p.processing_time,
-                    "overtime": overtime,
-                    "type": "resident",
-                }
+            for tok in p.tokens:
+                remaining = p.processing_time - tok.stay_time
+                if remaining < -self.P_Residual_time:
+                    overtime = -remaining - self.P_Residual_time
+                    return True, {
+                        "token_id": tok.token_id,
+                        "place": p.name,
+                        "stay_time": tok.stay_time,
+                        "proc_time": p.processing_time,
+                        "overtime": overtime,
+                        "type": "resident",
+                    }
         return False, None
 
     def _check_qtime_violation(self) -> None:
@@ -2071,7 +1889,7 @@ class ClusterTool:
     ) -> np.ndarray:
         """
         返回完整离散动作掩码（transition + wait）。
-        遍历 marks（而非 _token_pool），内联 remaining_time / has_ready_chamber 检查。
+        遍历 marks，内联 remaining_time / has_ready_chamber 检查。
         """
         start = int(self.T if wait_action_start is None else wait_action_start)
         total_actions = int(

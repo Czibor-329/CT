@@ -25,7 +25,6 @@ class StageIR:
     stage_process_time: Optional[float] = None
     stage_cleaning_duration: Optional[int] = None
     stage_cleaning_trigger_wafers: Optional[int] = None
-    stage_proc_rand_scale: Optional[float] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,11 +237,6 @@ def normalize_route_spec(
                 stage_cleaning_trigger_wafers=(
                     int(payload.get("cleaning_trigger_wafers"))
                     if payload.get("cleaning_trigger_wafers", None) is not None
-                    else None
-                ),
-                stage_proc_rand_scale=(
-                    float(payload.get("proc_rand_scale"))
-                    if payload.get("proc_rand_scale", None) is not None
                     else None
                 ),
             )
