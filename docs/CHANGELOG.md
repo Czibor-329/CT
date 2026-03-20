@@ -2,8 +2,23 @@
 
 ## 2026-03-20
 
+### 移除使能侧车与 `export_inference_sequence` 使能日志导出 (2026-03-20)
+- **What changed**：删除 `Env_PN_Single._last_action_enable_info`、`_action_enable_info_from_mask` 及 `eval_mode` 下逐步填充；`export_inference_sequence.py` 不再生成 `results/eval_logs.json` / `eval_logs.md`，移除 `--results-dir` 与 `rollout_and_export` 的 `results_dir`；`petri_single_adapter` 的 `step_verbose` 仅打印步号、时间与执行动作名。
+- **Why**：不在环境或独立文件中回传使能明细；策略与导出仍可从 TensorDict / `step` 的 `action_mask` 获知合法性。
+- **Impact**：依赖 `action_enable_json` / `action_enable_md` 或 `_last_action_enable_info` 的外部流程需改为消费 mask。
+
+### 移除 `get_enable_actions_with_reasons`（ClusterTool）(2026-03-20)
+- **What changed**：删除 `pn_single.ClusterTool.get_enable_actions_with_reasons`；删除仅被其使用的 `_has_ready_chamber_wafers`、`_is_process_ready`。
+- **Why**：消除与 `get_action_mask` 并行的第三套使能逻辑，避免口径漂移。
+- **Impact**：使能以 `get_action_mask` 为准；`REASON_DESC` 仍保留于 `pn_single` 供解读历史日志（若需要）。
+
+### 移除 `ClusterTool._get_enable_t`，由 `get_action_mask` 派生 reset 第二返回值 (2026-03-20)
+- **What changed**：删除 `pn_single.ClusterTool._get_enable_t`；`reset()` 仍返回 `(None, enabled_transition_indices)`，第二项改为对 `get_action_mask` 前 `T` 维为 `True` 的下标排序列表；单测改为通过 `get_action_mask` 取使能变迁集合。
+- **Why**：消除与 `get_action_mask` 并行的第二套 token 扫描使能逻辑，降低漂移风险；对外契约中「变迁使能」以 mask 为单一事实来源。
+- **Impact**：直接调用 `_get_enable_t` 的外部代码需改为 `get_action_mask` 或消费 `reset()` 第二项；行为与删前以 mask 为准的语义对齐。
+
 ### 可选 LLC→TM3 出片节拍（与 u_LP 同口径）(2026-03-20)
-- **What changed**：`PetriEnvConfig` 新增 `llc_tm3_takt_interval`（秒，`<=0` 关闭）。`pn_single.ClusterTool` 在间隔 `>0` 时对构网得到的 LLC→`d_TM3` 释放变迁施加节拍：使用 `takt_cycle_analyzer.build_fixed_takt_result` 生成周期序列；**首次 LLC→TM3 发射不因节拍被禁**，第二次起按序列取最小间隔；并写入 `_get_enable_t`、`get_action_mask`、`get_enable_actions_with_reasons`（`llc_tm3_takt_release_limit`）、`get_next_event_delta`。
+- **What changed**：`PetriEnvConfig` 新增 `llc_tm3_takt_interval`（秒，`<=0` 关闭）。`pn_single.ClusterTool` 在间隔 `>0` 时对构网得到的 LLC→`d_TM3` 释放变迁施加节拍：使用 `takt_cycle_analyzer.build_fixed_takt_result` 生成周期序列；**首次 LLC→TM3 发射不因节拍被禁**，第二次起按序列取最小间隔；并写入 `get_action_mask` 与 `get_next_event_delta`。
 - **Why**：路线 `1-2` 等实验需单独限制 TM3 侧 LLC 出片节奏，与 LP 发片节拍解耦。
 - **Impact**：默认 `0`，行为与旧版一致。实验时在 JSON 中设置例如 `llc_tm3_takt_interval: 150` 即可。
 - **How to use**：与 `single_route_name`（如 `1-2`）同配置文件增加 `llc_tm3_takt_interval`。
@@ -108,7 +123,7 @@
 ## 2026-03-16
 
 ### 单设备 t_* 路由改为 token 队列门控 (2026-03-16)
-- **What changed**：`pn_single/construct_single` 新增 token 路由队列模板（`route_queue + route_head_idx`）与 `t_*` 路由码映射；`pn_single.get_enable_t` 与 `get_enable_actions_with_reasons` 的路由判定改为读取运输位队首 token 的当前队头门控。
+- **What changed**：`pn_single/construct_single` 新增 token 路由队列模板（`route_queue + route_head_idx`）与 `t_*` 路由码映射；`pn_single` 使能/mask 路径的路由判定改为读取运输位队首 token 的当前队头门控。
 - **Why**：`get_enable_t` 是热路径，原 `where + pre_color` 的颜色切片判定在每步都有额外矩阵开销；改为队头码匹配可减少分支与切片成本，并保持路径语义。
 - **Impact**：仅 `t_*` 受路由门控（支持 `-1` 通配、单码、多码集合）；`u_*` 不再做路由门控，但 token 每次 fire 仍推进一次队头（`u_*` 步通常对应 `-1` 占位）。
 

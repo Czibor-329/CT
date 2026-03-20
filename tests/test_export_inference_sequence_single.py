@@ -100,7 +100,7 @@ def test_single_rollout_retries_until_finish(monkeypatch):
 
     monkeypatch.setattr(exporter, "_rollout_single_sequence", _fake_rollout_single_sequence)
 
-    seq, replay_overrides, reward_report = exporter._rollout_single_sequence_with_retry(
+    seq, replay_overrides, reward_report, finished = exporter._rollout_single_sequence_with_retry(
         model_path=Path("dummy.pt"),
         max_steps=10,
         seed=7,
@@ -110,5 +110,6 @@ def test_single_rollout_retries_until_finish(monkeypatch):
 
     assert calls == [7, 8, 9]
     assert seq[0]["action"] == "u_LP"
+    assert finished is True
     assert isinstance(replay_overrides, dict)
     assert isinstance(reward_report, dict)

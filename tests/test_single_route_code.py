@@ -10,6 +10,12 @@ def _fire_by_name(net: ClusterTool, transition_name: str) -> None:
     net.step(a1=tid, detailed_reward=True)
 
 
+def _enabled_transition_indices(net: ClusterTool) -> list[int]:
+    T = int(net.T)
+    m = net.get_action_mask(wait_action_start=T, n_actions=T + len(net.wait_durations))
+    return [i for i in range(T) if bool(m[i])]
+
+
 FULL_PROCESS_TIME_MAP = {
     "PM1": 300,
     "PM2": 300,
@@ -538,7 +544,7 @@ def test_cascade_route_code4_lld_targets_pm7_first_four_then_lp_done():
         assert len(d_tm2.tokens) == 1
         target = d_tm2.head()._target_place
         net.step(detailed_reward=True, wait_duration=5)
-        enabled_names = {net.id2t_name[t] for t in net._get_enable_t()}
+        enabled_names = {net.id2t_name[t] for t in _enabled_transition_indices(net)}
         if lap < 4:
             assert target == "PM7"
             assert "t_PM7" in enabled_names
@@ -579,12 +585,16 @@ def test_cascade_route_code4_manual_takt_interval_blocks_u_lp_until_due():
     )
     assert not bool(mask[u_lp_idx])
 
-    reasons = net.get_enable_actions_with_reasons(wait_action_start=net.T)
-    u_lp_disabled = [item for item in reasons["disabled"] if int(item["action"]) == u_lp_idx]
-    assert any(item.get("reason") == "takt_release_limit" for item in u_lp_disabled)
-
-    elapsed = net.time - net._last_u_LP_fire_time
-    net.advance_time(max(0, 30 - int(elapsed)), event_reason="test_route4_takt")
+    guard = 0
+    while not bool(
+        net.get_action_mask(
+            wait_action_start=int(net.T),
+            n_actions=int(net.T) + len(net.wait_durations),
+        )[u_lp_idx]
+    ):
+        net.step(detailed_reward=True, wait_duration=5)
+        guard += 1
+        assert guard < 40
 
     mask2 = net.get_action_mask(
         wait_action_start=net.T,
@@ -739,10 +749,6 @@ def test_single_max_wafers_blocks_u_lp_when_wip_reaches_limit():
         n_actions=net.T + len(net.wait_durations),
     )
     assert not bool(mask[u_lp_idx])
-
-    reasons = net.get_enable_actions_with_reasons(wait_action_start=net.T)
-    u_lp_disabled = [item for item in reasons["disabled"] if int(item["action"]) == u_lp_idx]
-    assert any(item.get("reason") == "max_wafers_in_system_limit" for item in u_lp_disabled)
 
 
 def test_single_max_wafers_releases_slot_after_lp_done():

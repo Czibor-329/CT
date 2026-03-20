@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 from solutions.Continuous_model.env_single import Env_PN_Single
-from solutions.Continuous_model.pn_single import REASON_DESC
 
 REWARD_DESC_VIZ: Dict[str, str] = {
     "total": "本步总奖励",
@@ -61,22 +60,9 @@ class PetriSingleAdapter(AlgorithmAdapter):
         self._step_count += 1
 
         if self.step_verbose:
-            enable_info = self.net.get_enable_actions_with_reasons(
-                wait_action_start=int(self.env.wait_action_start)
-            )
-            enabled_names = [self.env.get_action_name(i) for i in enable_info.get("enabled", [])]
-            by_reason: Dict[str, List[str]] = {}
-            for d in enable_info.get("disabled", []):
-                r = d.get("reason", "unknown")
-                n = d.get("name", str(d.get("action", "")))
-                by_reason.setdefault(r, []).append(n)
             action_name = self.get_action_name(action)
             t = getattr(self.net, "time", 0)
             print(f"\n--- Step {self._step_count} (t={t}) 执行: {action_name} ---")
-            print(f"  使能({len(enabled_names)}): {', '.join(enabled_names) or '-'}")
-            for r, names in sorted(by_reason.items()):
-                desc = REASON_DESC.get(r, r)
-                print(f"  不使能({desc}): {', '.join(names)}")
 
         wait_duration = self.env.parse_wait_action(int(action))
         if wait_duration is not None:

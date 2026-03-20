@@ -35,7 +35,7 @@
 - 统一入口命令（推荐）:
   - 单设备训练: `python -m solutions.Continuous_model.train_single --device single`
   - 并发训练: `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
-  - 推理导出: `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`
+  - 推理导出: `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`（写入仓库 `seq/tmp.json`，含 `replay_env_overrides` 等）
   - 可视化: `python -m visualization.main --device single`
   - Td_petri 主入口: `python -m solutions.Td_petri.tdpn`
 - 关键配置:

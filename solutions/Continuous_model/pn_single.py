@@ -1,7 +1,4 @@
-"""
-单设备 Petri 网（构网驱动、单机械手、单动作）。
-执行链：construct_single -> _get_enable_t -> step -> calc_reward
-"""
+
 
 from __future__ import annotations
 
@@ -57,6 +54,7 @@ REASON_DESC: Dict[str, str] = {
     "takt_release_limit": "节拍限制：距上次发片间隔未达当前周期节拍",
     "llc_tm3_takt_release_limit": "LLC→TM3 节拍限制：距上次 LLC 出片间隔未达当前周期节拍",
     "max_wafers_in_system_limit": "在制品已达上限，禁止继续发片",
+    "action_mask": "动作掩码为 False（与 get_action_mask 一致）",
 }
 
 
@@ -863,7 +861,10 @@ class ClusterTool:
         self.m = np.array([len(p.tokens) for p in self.marks], dtype=int)
         self._rebuild_token_pool()
         self._last_state_scan = {}
-        return None, self._get_enable_t()
+        T = int(self.T)
+        mask = self.get_action_mask(wait_action_start=T, n_actions=T + len(self.wait_durations))
+        enabled_t = sorted(i for i in range(T) if bool(mask[i]))
+        return None, enabled_t
 
     def _get_obs_place_order(self) -> List[str]:
         """返回观测顺序：LP + 运输位 + 腔室。"""
@@ -1370,89 +1371,6 @@ class ClusterTool:
             return None
         return target
 
-    def _get_enable_t(self) -> List[int]:
-        """返回当前使能的变迁索引列表（仅 transition，供 reset 等使用）。"""
-        enabled: set[int] = set()
-        struct_enabled_cache: Dict[int, bool] = {}
-
-        def _is_struct_enabled(t_idx: int) -> bool:
-            cached = struct_enabled_cache.get(int(t_idx))
-            if cached is not None:
-                return bool(cached)
-            result = bool(self._transition_structurally_enabled(int(t_idx)))
-            struct_enabled_cache[int(t_idx)] = result
-            return result
-
-        # 按你的要求保持优先级：u_LP 最先检查（受 _allow_start 节拍门控）。
-        u_lp_idx = self._u_transition_by_source.get("LP")
-        if u_lp_idx is not None and (self._allow_start()):
-            if _is_struct_enabled(u_lp_idx) and self._select_target_for_source("LP") is not None:
-                enabled.add(int(u_lp_idx))
-
-        for tok in self._token_pool:
-            place_idx = tok._place_idx
-            if place_idx < 0 or place_idx >= len(self.id2p_name):
-                continue
-            place_name = self.id2p_name[place_idx]
-            if place_name in {"LP", "LP_done"}:
-                continue
-
-            # 剩余加工/停留时间 > 0 则不可放行。
-            if self._token_remaining_time(tok, place_idx) > 0:
-                continue
-
-            # 运输位 token：尝试 t_*
-            if place_name.startswith("d_TM"):
-                for t_idx in self._t_transitions_by_transport.get(place_name, []):
-                    t_name = self.id2t_name[t_idx]
-                    target = t_name[2:]
-                    target_hint = tok._target_place
-                    if target_hint is not None and target_hint != target:
-                        continue
-                    if not self._route_gate_allows_t(self._token_route_gate(tok), self._t_route_code_by_idx[t_idx]):
-                        continue
-                    target_place = self._get_place(target)
-                    if target_place.is_cleaning:
-                        continue
-                    if not _is_struct_enabled(t_idx):
-                        continue
-                    enabled.add(int(t_idx))
-                continue
-
-            # 加工腔/缓冲位 token：尝试 u_*
-            target = self._token_next_target(tok)
-            if target is not None:
-                target_place = self._place_by_name.get(str(target))
-                if (
-                    target_place is None
-                    or target_place.is_cleaning
-                    or len(target_place.tokens) >= target_place.capacity
-                ):
-                    target = None
-            if target is None:
-                target = self._select_target_for_source(place_name)
-            if target is None:
-                continue
-            transport = self._transport_for_t_target(target)
-            u_idx = self._u_transition_by_source_transport.get((place_name, transport))
-            if u_idx is None:
-                u_idx = self._u_transition_by_source.get(place_name)
-            if u_idx is None:
-                continue
-            struct_enabled = _is_struct_enabled(u_idx)
-            if not struct_enabled:
-                continue
-            if (
-                self._llc_tm3_takt_result is not None
-                and self._llc_tm3_u_idx is not None
-                and int(u_idx) == int(self._llc_tm3_u_idx)
-                and not self._allow_llc_tm3_fire_now()
-            ):
-                continue
-            enabled.add(int(u_idx))
-
-        return sorted(enabled)
-
     def _allow_start(self):
         """returns True if u_LP can fire now, based on WIP limit and takt."""
         if not self._allow_start_by_wip_limit():
@@ -1609,131 +1527,6 @@ class ClusterTool:
             if np.any(m[pst_idx] + net[pst_idx, t_idx] > k[pst_idx]):
                 return False
         return True
-
-    def get_enable_actions_with_reasons(
-        self,
-        wait_action_start: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """
-        返回使能动作列表及不使能动作及原因。
-        仅在评估模式下被调用，避免训练时额外开销。
-        """
-        start = int(self.T if wait_action_start is None else wait_action_start)
-
-        d_tm = self._get_place("d_TM1") if ("d_TM1" in self.id2p_name and self.device_mode != "cascade") else None
-        head_tok = d_tm.head() if (d_tm is not None and len(d_tm.tokens) > 0) else None
-        locked_sources: Set[str] = set()
-        if self.robot_capacity == 2 and self.device_mode != "cascade" and head_tok is not None:
-            locked_sources = set(head_tok._dst_level_targets or ())
-
-        enabled: List[int] = []
-        disabled: List[Dict[str, Any]] = []
-
-        # 遍历变迁（使用缓存的 pre/pst 索引）
-        for t in range(self.T):
-            base_pre_idx = self._pre_place_indices[t]
-            t_name = self.id2t_name[t]
-
-            if base_pre_idx.size == 0:
-                disabled.append({"action": t, "name": t_name, "reason": "pre_color_mismatch"})
-                continue
-
-            if np.any(self.m[base_pre_idx] < self.pre[base_pre_idx, t]):
-                disabled.append({"action": t, "name": t_name, "reason": "insufficient_tokens"})
-                continue
-            if np.any(self.m + self.net[:, t] > self.k):
-                disabled.append({"action": t, "name": t_name, "reason": "capacity_exceeded"})
-                continue
-
-            if t_name.startswith("u_"):
-                src = t_name[2:]
-                if t_name == "u_LP" and not self._allow_start_by_wip_limit():
-                    disabled.append({"action": t, "name": t_name, "reason": "max_wafers_in_system_limit"})
-                    continue
-                if self.robot_capacity == 2 and self.device_mode != "cascade":
-                    if d_tm is not None and len(d_tm.tokens) > 0 and locked_sources and src not in locked_sources:
-                        disabled.append({"action": t, "name": t_name, "reason": "locked_by_arm2_head"})
-                        continue
-                    if self._select_target_for_source(src, ignore_cleaning=True) is None:
-                        disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
-                        continue
-                else:
-                    if self._select_target_for_source(src, ignore_cleaning=True) is None:
-                        disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
-                        continue
-            elif t_name.startswith("t_"):
-                t_code = self._t_route_code_by_idx[t]
-                tp_idx = self._transport_pre_place_idx[t]
-                if tp_idx >= 0:
-                    tp_head = self.marks[tp_idx].head() if len(self.marks[tp_idx].tokens) > 0 else None
-                    if tp_head is not None:
-                        gate = self._token_route_gate(tp_head)
-                        if not self._route_gate_allows_t(gate, t_code):
-                            disabled.append({"action": t, "name": t_name, "reason": "pre_color_mismatch"})
-                            continue
-                target = t_name[2:]
-                transport_name = self._transport_for_t_target(target)
-                tp = self._get_place(transport_name)
-                tp_head = tp.head() if len(tp.tokens) > 0 else None
-                tp_head_target = tp_head._target_place if tp_head is not None else None
-                if tp_head_target is not None and tp_head_target != target:
-                    disabled.append({"action": t, "name": t_name, "reason": "wrong_destination"})
-                    continue
-
-            # Stage2
-            if t_name.startswith("u_"):
-                src = t_name[2:]
-                if not self._is_process_ready(src):
-                    disabled.append({"action": t, "name": t_name, "reason": "process_not_ready"})
-                    continue
-                if self._select_target_for_source(src) is None:
-                    disabled.append({"action": t, "name": t_name, "reason": "no_receiving_target"})
-                    continue
-            elif t_name.startswith("t_"):
-                target = t_name[2:]
-                target_place = self._get_place(target)
-                if target_place.is_cleaning:
-                    disabled.append({"action": t, "name": t_name, "reason": "target_cleaning"})
-                    continue
-                d_place = self._get_place(self._transport_for_t_target(target))
-                dwell_time = max(0, int(getattr(d_place, "processing_time", self.T_transport)))
-                if len(d_place.tokens) > 0 and d_place.head().stay_time < dwell_time:
-                    disabled.append({"action": t, "name": t_name, "reason": "dwell_time_not_met"})
-                    continue
-
-            # 节拍限制：u_LP 发片间隔不得小于当前周期节拍
-            if self._takt_result and t_name == "u_LP":
-                required = self._takt_required_interval()
-                if required is not None and (self.time - self._last_u_LP_fire_time) < int(required):
-                    disabled.append({"action": t, "name": t_name, "reason": "takt_release_limit"})
-                    continue
-
-            if (
-                self._llc_tm3_takt_result is not None
-                and self._llc_tm3_u_idx is not None
-                and int(t) == int(self._llc_tm3_u_idx)
-            ):
-                req_llc = self._llc_tm3_takt_required_interval()
-                if req_llc is not None and (self.time - self._last_u_LLC_tm3_fire_time) < int(req_llc):
-                    disabled.append({"action": t, "name": t_name, "reason": "llc_tm3_takt_release_limit"})
-                    continue
-
-            enabled.append(t)
-
-        # wait 动作
-        restrict_long_wait = self._has_ready_chamber_wafers()
-        for offset, duration in enumerate(self.wait_durations):
-            action_idx = start + int(offset)
-            if restrict_long_wait and int(duration) > 5:
-                disabled.append({
-                    "action": action_idx,
-                    "name": f"WAIT_{int(duration)}s",
-                    "reason": "has_ready_wafer_restrict_wait",
-                })
-            else:
-                enabled.append(action_idx)
-
-        return {"enabled": enabled, "disabled": disabled}
 
     def calc_wafer_statistics(self) -> Dict[str, Any]:
         system_times: List[float] = []
@@ -2085,23 +1878,6 @@ class ClusterTool:
                     best = delta_llc
         return best
 
-    def _has_ready_chamber_wafers(self) -> bool:
-        """
-        判断是否存在“加工完成待取片”晶圆。
-        规则：在当前路径定义的任一加工腔室中，存在 token 满足 stay_time >= processing_time。
-        """
-        for chamber_name in self._ready_chambers:
-            place = self._place_by_name.get(chamber_name)
-            if place is None:
-                continue
-            processing_time = place.processing_time
-            if processing_time <= 0:
-                continue
-            for tok in place.tokens:
-                if tok.stay_time >= processing_time:
-                    return True
-        return False
-
     def _on_processing_unload(self, source_name: str) -> None:
         if not self.cleaning_enabled:
             return
@@ -2131,14 +1907,6 @@ class ClusterTool:
                     "trigger_count": int(count),
                 }
             )
-
-    def _is_process_ready(self, place_name: str) -> bool:
-        place = self._get_place(place_name)
-        if len(place.tokens) == 0:
-            return False
-        if place.processing_time <= 0:
-            return True
-        return place.head().stay_time >= place.processing_time
 
     def _select_target_for_source(
         self,

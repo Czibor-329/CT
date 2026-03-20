@@ -108,7 +108,7 @@ class BasedToken:
 
 **构网来源**
 - `solutions/Continuous_model/construct_single.py`
-- 在初始化阶段生成：`pre/pst/net/m0/md/id2p_name/id2t_name/marks`；构网同时返回 `pre_place_indices`、`pst_place_indices`、`transport_pre_place_idx`（每变迁的 pre/pst 库所索引及运输位 pre 索引），供 `get_action_mask`/`_get_enable_t`、`_fire`、`get_enable_actions_with_reasons` 复用以减少检索
+- 在初始化阶段生成：`pre/pst/net/m0/md/id2p_name/id2t_name/marks`；构网同时返回 `pre_place_indices`、`pst_place_indices`、`transport_pre_place_idx`（每变迁的 pre/pst 库所索引及运输位 pre 索引），供 `get_action_mask`、`_fire` 等复用以减少检索
 - `d_TM1` 在构网中设置 `processing_time=5s`（默认），用于约束“运输位停留后才能 `t_*` 进入腔室”
 - 通过 `PetriEnvConfig.single_robot_capacity` 控制 `d_TM1` 容量：
   - `1`：Single Arm（单臂）
@@ -136,9 +136,9 @@ class BasedToken:
   - 示例：`[-1, (1,2), -1, 3, ...]` 表示 `u_*` 后到达并行 `t_PM7/t_PM8` 阶段，再进入 `t_LLC` 阶段。
 
 **主要接口**
-- `reset()`：重置网状态
-- `_get_enable_t() -> List[int]`：内部使能判定（仅 transition 索引列表，供 `reset()` 返回值等使用）
+- `reset()`：重置网状态；返回 `(None, enabled_transition_indices)`，第二项为当前使能变迁索引的有序列表，由 `get_action_mask` 的前 `T` 维派生（与 RL 掩码中变迁段一致）。`Env_PN_Single` 等封装通常忽略该返回值，另行调用 `get_action_mask` 构建 `action_mask`。
 - `get_action_mask(wait_action_start=None, n_actions=None) -> np.ndarray`：返回完整离散动作掩码（`transition + wait`）。使能与 wait 规则在此统一完成；实现为判定每个 transition/wait 使能时直接写 `mask[idx]=True`，不先生成动作 id 列表再写入。
+- `Env_PN_Single`：`eval_mode=True` 时仍启用 `detailed_reward` 与 `net.eval()`；动作合法性仅通过 TensorDict 的 `action_mask`（及 `ClusterTool.step` 返回值中的 mask）表达，不在环境上缓存逐步使能列表。
 - `step(a1=None, detailed_reward=False, wait_duration=None)`：执行单步并返回 `(done, reward_result, scrap, action_mask)`（动作校验 -> 发射/等待 -> 时间推进 -> 奖励 -> mask）；`advance_time()` 内会同步完成 `scrap/qtime` 状态扫描，减少重复 token 遍历。补充：非 WAIT 路径下，若本步 `u_*` 已取走与 `scrap_info` 同 `token_id` 且同源腔室的 resident wafer，则撤销本步 scrap（不终止、不追加 `scrap_penalty`）。
 - `get_next_event_delta() -> Optional[int]`：计算当前时刻到下一关键事件的时间差（秒）。通过扫描 `_token_pool` 按 token 所在库所（运输 d_TM* / 加工腔室）用不同规则计算；节拍为「下一节拍时刻 − 当前时间」。用于 wait 时截断推进量，避免跨过取片或发片决策点。
 - `calc_reward(t1, t2, detailed=False)`：奖励计算（`detailed_reward=True` 时返回含 `total` 的字典）
@@ -185,7 +185,7 @@ class BasedToken:
 **驻留时间更新规则（单设备）**
 - `LP`（type=3）中的 token 不更新 `stay_time`，与 `pn.py` 保持一致
 
-**双臂防死锁规则（`_get_enable_t`）**
+**双臂防死锁规则（使能 / mask）**
 - 当 `d_TM1` 为空时：允许任意满足前置条件的 `u_*` 取片。
 - 当 `d_TM1` 非空且队首晶圆在“取片时”其 `dst` 层已满：仅允许继续取出该 `dst` 层中的晶圆，禁止取其它位置晶圆。
 - `t_*` 始终遵循 FIFO 队首目标约束（队首 `_target_place`）与 `d_TM1` dwell 时间约束。

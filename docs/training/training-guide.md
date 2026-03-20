@@ -33,7 +33,7 @@
   - `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
   - 参数: `--config`, `--checkpoint`
 - 导出推理序列:
-  - `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`
+  - `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`（输出 `seq/tmp.json`）
 - 关键配置优先级:
   - single: `s_train.json` 作为基础，CLI 参数覆盖。
   - concurrent: `--config` 文件优先，不存在时退回默认配置对象。

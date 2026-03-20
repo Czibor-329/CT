@@ -7,6 +7,12 @@ def _fire_by_name(net: ClusterTool, transition_name: str) -> None:
     net.step(a1=tid, detailed_reward=True)
 
 
+def _enabled_transition_indices(net: ClusterTool) -> list[int]:
+    T = int(net.T)
+    m = net.get_action_mask(wait_action_start=T, n_actions=T + len(net.wait_durations))
+    return [i for i in range(T) if bool(m[i])]
+
+
 def test_cascade_token_route_queue_advances_on_each_fire():
     cfg = PetriEnvConfig(
         n_wafer=1,
@@ -59,7 +65,7 @@ def test_single_mode_t_routing_uses_route_queue_gate():
     assert hasattr(tok, "route_head_idx")
     _fire_by_name(net, "u_LP")
     net.step(detailed_reward=True, wait_duration=5)
-    enabled_names = {net.id2t_name[t] for t in net._get_enable_t()}
+    enabled_names = {net.id2t_name[t] for t in _enabled_transition_indices(net)}
     assert "t_PM1" in enabled_names
     assert "t_PM3" not in enabled_names
     assert "t_PM4" not in enabled_names

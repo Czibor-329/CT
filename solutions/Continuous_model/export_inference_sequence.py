@@ -1,9 +1,8 @@
 """
-并发模型推理序列导出工具。
+单设备/级联推理序列导出工具。
 
-将 Env_PN_Concurrent + 训练好的并发策略模型的推理轨迹导出为：
-1) solutions/Continuous_model/action_series/<name>_<timestamp>.json
-2) solutions/Td_petri/planB_sequence.json
+在 `Env_PN_Single` 上 roll out 策略，将 `sequence`、`replay_env_overrides`、`reward_report`
+等写入仓库根目录 `seq/tmp.json`。
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,21 +21,7 @@ from torchrl.modules import MaskedCategorical, ProbabilisticActor
 
 from solutions.PPO.network.models import MaskedPolicyHead
 from solutions.Continuous_model.env_single import Env_PN_Single
-from solutions.Continuous_model.pn_single import REASON_DESC
 
-REWARD_DESC: dict[str, str] = {
-    "total": "本步总奖励",
-    "time_cost": "时间惩罚",
-    "proc_reward": "加工奖励",
-    "safe_reward": "安全奖励",
-    "warn_penalty": "驻留警告惩罚",
-    "penalty": "运输超时惩罚",
-    "wafer_done_bonus": "单片完工奖励",
-    "finish_bonus": "全部完工奖励",
-    "scrap_penalty": "报废惩罚",
-    "release_violation_penalty": "释放违规惩罚",
-    "idle_timeout_penalty": "闲置超时惩罚",
-}
 
 def _to_step_state(td_next: Any) -> Any:
     if "next" in td_next.keys():
@@ -177,7 +161,7 @@ def _rollout_single_sequence(
     robot_capacity: int,
     device_mode: str = "single",
     exploration: str = "mode",
-) -> tuple[list[dict[str, Any]], bool, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], bool, dict[str, Any], dict[str, Any]]:
     device = torch.device("cpu")
     torch.manual_seed(seed)
     env = Env_PN_Single(
@@ -190,7 +174,6 @@ def _rollout_single_sequence(
 
     td = env.reset()
     sequence: list[dict[str, Any]] = []
-    action_enable_steps: list[dict[str, Any]] = []
     finished = False
     scrap_steps: list[int] = []
     release_steps: list[int] = []
@@ -229,21 +212,6 @@ def _rollout_single_sequence(
             terminated = _to_terminated(td_next)
             finished = _to_finish(td_next)
 
-            enable_info = getattr(env, "_last_action_enable_info", {})
-            reward_detail = getattr(env, "_last_reward_detail", {})
-            enabled_idxs = enable_info.get("enabled", [])
-            enabled_names = [_decode_single_action_name(env, i) for i in enabled_idxs]
-            step_enable = {
-                "step": step,
-                "time": current_time,
-                "action": action_name,
-                "enabled": enabled_idxs,
-                "enabled_names": enabled_names,
-                "disabled": enable_info.get("disabled", []),
-                "reward_detail": reward_detail,
-            }
-            action_enable_steps.append(step_enable)
-
             sequence.append(
                 {
                     "step": step,
@@ -275,7 +243,7 @@ def _rollout_single_sequence(
     single_route_cfg = getattr(env.net, "single_route_config", None)
     if single_route_cfg is not None:
         replay_env_overrides["single_route_config"] = dict(single_route_cfg)
-    return sequence, finished, replay_env_overrides, reward_report, action_enable_steps
+    return sequence, finished, replay_env_overrides, reward_report
 
 
 def _rollout_single_sequence_with_retry(
@@ -285,18 +253,17 @@ def _rollout_single_sequence_with_retry(
     robot_capacity: int,
     max_retries: int = 10,
     device_mode: str = "single",
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], list[dict[str, Any]], bool]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], bool]:
     if max_retries < 1:
         raise ValueError("max_retries 必须 >= 1")
 
     last_sequence: list[dict[str, Any]] = []
     last_overrides: dict[str, Any] = {}
     last_report: dict[str, Any] = {}
-    last_enable_steps: list[dict[str, Any]] = []
     last_finished = False
     for attempt in range(max_retries):
         attempt_seed = seed + attempt
-        sequence, finished, replay_env_overrides, reward_report, action_enable_steps = _rollout_single_sequence(
+        sequence, finished, replay_env_overrides, reward_report = _rollout_single_sequence(
             model_path=model_path,
             max_steps=max_steps,
             seed=attempt_seed,
@@ -307,99 +274,14 @@ def _rollout_single_sequence_with_retry(
         last_sequence = sequence
         last_overrides = replay_env_overrides
         last_report = reward_report
-        last_enable_steps = action_enable_steps
         last_finished = finished
         if finished:
             if attempt > 0:
                 print(f"[INFO] single 模式第 {attempt + 1} 次推理达到 finish。")
-            return sequence, replay_env_overrides, reward_report, action_enable_steps, finished
+            return sequence, replay_env_overrides, reward_report, finished
 
     print(f"[WARN] single 模式重试 {max_retries} 次后仍未 finish，导出最后一次序列。")
-    return last_sequence, last_overrides, last_report, last_enable_steps, last_finished
-
-def _write_action_enable_reports(
-    action_enable_steps: list[dict[str, Any]],
-    reward_report: dict[str, Any],
-    results_dir: Path,
-    timestamp: str,
-    device_mode: str,
-    finished: bool = False,
-) -> tuple[Path, Path]:
-    """将动作使能信息写入 JSON 与 Markdown 双格式，返回两个文件路径。"""
-    results_dir.mkdir(parents=True, exist_ok=True)
-    base_name = f"eval_logs"
-    json_path = results_dir / f"{base_name}.json"
-    md_path = results_dir / f"{base_name}.md"
-
-    payload = {
-        "episode_id": base_name,
-        "mode": "eval",
-        "device_mode": device_mode,
-        "finished": finished,
-        "reward_report": reward_report,
-        "steps": action_enable_steps,
-    }
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-    # Markdown 可读报告
-    lines: list[str] = []
-    lines.append(f"# 评估动作使能日志 — {timestamp}")
-    lines.append("")
-    lines.append("## 摘要")
-    lines.append(f"- 总步数：{len(action_enable_steps)}")
-    rp = reward_report
-    lines.append(f"- 状态：{'finish' if finished else 'terminated'}")
-    lines.append(f"- 惩罚：scrap={rp.get('scrap_penalty', {}).get('count', 0)}, release={rp.get('release_penalty', {}).get('count', 0)}, idle={rp.get('idle_timeout_penalty', {}).get('count', 0)}")
-    lines.append("")
-    lines.append("## 原因说明")
-    lines.append("| 代码 | 含义 |")
-    lines.append("|------|------|")
-    for code, desc in REASON_DESC.items():
-        lines.append(f"| {code} | {desc} |")
-    lines.append("")
-    lines.append("## 奖励说明")
-    lines.append("| 代码 | 含义 |")
-    lines.append("|------|------|")
-    for code, desc in REWARD_DESC.items():
-        lines.append(f"| {code} | {desc} |")
-    lines.append("")
-    lines.append("## 每步详情")
-    for s in action_enable_steps:
-        step_num = s.get("step", 0)
-        t = s.get("time", 0)
-        action = s.get("action", "")
-        enabled_names = s.get("enabled_names", [])
-        disabled = s.get("disabled", [])
-        by_reason: dict[str, list[str]] = {}
-        for d in disabled:
-            r = d.get("reason", "unknown")
-            n = d.get("name", str(d.get("action", "")))
-            by_reason.setdefault(r, []).append(n)
-        lines.append(f"### Step {step_num} (t={t}) — 执行: {action}")
-        lines.append(f"**使能({len(enabled_names)})**: {', '.join(enabled_names) or '-'}")
-        lines.append("**不使能(按原因)**")
-        for r, names in sorted(by_reason.items()):
-            desc = REASON_DESC.get(r, r)
-            lines.append(f"- {desc}: {', '.join(names)}")
-        reward_detail = dict(s.get("reward_detail", {}))
-        if reward_detail:
-            lines.append("**详细奖励**")
-            total = reward_detail.get("total")
-            for k in sorted(reward_detail.keys()):
-                v = reward_detail[k]
-                if k == "scrap_info":
-                    lines.append(f"- scrap_info: {v}")
-                elif isinstance(v, (int, float)):
-                    if v == 0:
-                        continue
-                    lbl = REWARD_DESC.get(k, k)
-                    lines.append(f"- {lbl}: {v:.4f}" if isinstance(v, float) else f"- {lbl}: {v:.1f}")
-        lines.append("")
-    with md_path.open("w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
-    return json_path, md_path
+    return last_sequence, last_overrides, last_report, last_finished
 
 
 def rollout_and_export(
@@ -411,12 +293,11 @@ def rollout_and_export(
     device_mode: str,
     robot_capacity: int,
     single_retries: int,
-    results_dir: Path | None = None,
 ) -> dict[str, Path]:
     if not model_path.exists():
         raise FileNotFoundError(f"模型文件不存在: {model_path}")
     if device_mode == "single":
-        sequence, replay_env_overrides, reward_report, action_enable_steps, finished = _rollout_single_sequence_with_retry(
+        sequence, replay_env_overrides, reward_report, _finished = _rollout_single_sequence_with_retry(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
@@ -432,7 +313,7 @@ def rollout_and_export(
             "replay_env_overrides": replay_env_overrides,
         }
     elif device_mode == "cascade":
-        sequence, replay_env_overrides, reward_report, action_enable_steps, finished = _rollout_single_sequence_with_retry(
+        sequence, replay_env_overrides, reward_report, _finished = _rollout_single_sequence_with_retry(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
@@ -460,31 +341,13 @@ def rollout_and_export(
     else:
         raise ValueError(f"不支持的 device_mode: {device_mode}")
 
-    project_root = Path(__file__).resolve().parents[2]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
     action_series_dir = Path(__file__).resolve().parents[2] / "seq"
     action_series_path = action_series_dir / "tmp.json"
 
     with action_series_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    out: dict[str, Path] = {"action_series_path": action_series_path}
-
-    # 写入 results/ 的动作使能日志（JSON + Markdown）
-    results_path = results_dir or (project_root / "results")
-    json_log, md_log = _write_action_enable_reports(
-        action_enable_steps=action_enable_steps,
-        reward_report=reward_report,
-        results_dir=results_path,
-        timestamp=timestamp,
-        device_mode=device_mode,
-        finished=finished,
-    )
-    out["action_enable_json"] = json_log
-    out["action_enable_md"] = md_log
-
-    return out
+    return {"action_series_path": action_series_path}
 
 
 def main() -> None:
@@ -519,19 +382,12 @@ def main() -> None:
         default=10,
         help="single 模式未 finish 时的最大重试次数",
     )
-    parser.add_argument(
-        "--results-dir",
-        type=Path,
-        default=None,
-        help="动作使能日志输出目录，默认 results/",
-    )
     args = parser.parse_args()
     out_name = args.out_name
     selected_device = args.device
     if out_name == "concurrent_infer_seq" and selected_device == "single":
         out_name = "single_infer_seq"
     model_path = Path(__file__).resolve().parents[2] / "models" / args.model
-    results_dir = args.results_dir or Path(__file__).resolve().parents[2] / "results"
     out = rollout_and_export(
         model_path=model_path,
         max_steps=args.max_steps,
@@ -541,11 +397,9 @@ def main() -> None:
         device_mode=selected_device,
         robot_capacity=args.robot_capacity,
         single_retries=args.single_retries,
-        results_dir=results_dir,
     )
 
     print(f"[INFO] 已导出 action_series: {out['action_series_path']}")
-    print(f"[INFO] 已导出动作使能日志: {out['action_enable_json']}, {out['action_enable_md']}")
 
 
 if __name__ == "__main__":

@@ -132,7 +132,6 @@ class Env_PN_Single(EnvBase):
         self.wait_action_indices = list(range(self.wait_action_start, self.n_actions))
         self.n_wafer = config.n_wafer
         self._make_spec()
-        self._last_action_enable_info: dict = {}
         self._last_reward_detail: dict = {}
         self._out_time = torch.zeros(1, dtype=torch.int64)
         self._out_reward = torch.zeros(1, dtype=torch.float32)
@@ -213,7 +212,6 @@ class Env_PN_Single(EnvBase):
 
     def _reset(self, td_params):
         self.net.reset()
-        self._last_action_enable_info = {}
         self._last_reward_detail = {}
         if self.eval_mode:
             self.net.eval()
@@ -223,10 +221,6 @@ class Env_PN_Single(EnvBase):
 
     def _step(self, tensordict=None):
         action = int(tensordict["action"].item())
-        if self.eval_mode:
-            self._last_action_enable_info = self.net.get_enable_actions_with_reasons(
-                wait_action_start=self.wait_action_start
-            )
         wait_duration = self.parse_wait_action(action)
         use_detailed_reward = self.eval_mode
         if wait_duration is not None:
