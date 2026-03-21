@@ -145,16 +145,6 @@ class ClusterTool:
     }
 
     @classmethod
-    def _normalize_device_mode(cls, raw_mode: Any) -> str:
-        mode = str(raw_mode).strip().lower()
-        if mode not in cls._VALID_ROUTE_CODES:
-            valid_modes = sorted(cls._VALID_ROUTE_CODES.keys())
-            raise ValueError(
-                f"invalid device_mode={raw_mode!r}; expected one of {valid_modes}"
-            )
-        return mode
-
-    @classmethod
     def _normalize_route_code(cls, raw_route_code: Any, device_mode: str) -> int:
         try:
             route_code = int(raw_route_code)
@@ -169,28 +159,6 @@ class ClusterTool:
                 f"expected one of {valid_route_codes}"
             )
         return route_code
-
-    @staticmethod
-    def _resolve_route_name_from_config(
-        route_cfg: Mapping[str, Any],
-        device_mode: str,
-        route_code: int,
-        preferred_name: Optional[str],
-    ) -> Optional[str]:
-        routes = route_cfg.get("routes") or {}
-        if not isinstance(routes, Mapping) or not routes:
-            return None
-        if preferred_name and preferred_name in routes:
-            return str(preferred_name)
-        legacy_alias = (
-            route_cfg.get("legacy", {})
-            .get("route_code_alias", {})
-            .get(device_mode, {})
-        )
-        aliased = legacy_alias.get(str(route_code))
-        if aliased and aliased in routes:
-            return str(aliased)
-        return str(next(iter(routes.keys())))
 
     @staticmethod
     def _extract_route_stage_overrides(
@@ -271,6 +239,7 @@ class ClusterTool:
         assert config is not None, "config must be provided"
         self.config = config
 
+        # ====== 基本配置 =======
         self.MAX_TIME = config.MAX_TIME
         self.n_wafer = int(config.n_wafer)
         self.max_wafers_in_system = int(config.max_wafers_in_system)
@@ -313,7 +282,7 @@ class ClusterTool:
         }
         self.wait_durations = _normalize_wait_durations(config.wait_durations)
         
-        self.device_mode = self._normalize_device_mode(config.device_mode)
+        self.device_mode = config.device_mode
         self.route_code = self._normalize_route_code(config.route_code, self.device_mode)
         self.config.device_mode = self.device_mode
         self.config.route_code = self.route_code
@@ -327,98 +296,71 @@ class ClusterTool:
         self._route_stage_proc_time_map: Dict[str, int] = {}
         self._route_stage_cleaning_duration_map: Dict[str, int] = {}
         self._route_stage_cleaning_trigger_map: Dict[str, int] = {}
-        if self.single_route_config is not None:
-            self._selected_single_route_name = self._resolve_route_name_from_config(
+
+        # ====== 路径解析 ======
+        self._selected_single_route_name = self.single_route_name
+        if self._selected_single_route_name is not None:
+            (
+                self._route_stage_proc_time_map,
+                self._route_stage_cleaning_duration_map,
+                self._route_stage_cleaning_trigger_map,
+            ) = self._extract_route_stage_overrides(
                 route_cfg=dict(self.single_route_config or {}),
-                device_mode=self.device_mode,
-                route_code=self.route_code,
-                preferred_name=self.single_route_name,
+                route_name=self._selected_single_route_name,
             )
-            if self._selected_single_route_name is not None:
-                (
-                    self._route_stage_proc_time_map,
-                    self._route_stage_cleaning_duration_map,
-                    self._route_stage_cleaning_trigger_map,
-                ) = self._extract_route_stage_overrides(
-                    route_cfg=dict(self.single_route_config or {}),
-                    route_name=self._selected_single_route_name,
-                )
-                self.single_route_name = self._selected_single_route_name
-                self.config.single_route_name = self._selected_single_route_name
+            self.single_route_name = self._selected_single_route_name
+            self.config.single_route_name = self._selected_single_route_name
 
-        route_key = (self.device_mode, self.route_code)
-        if self.single_route_config is None:
-            stages = ROUTE_SPECS.get(route_key)
-            if stages is None:
-                valid_route_codes = sorted(self._VALID_ROUTE_CODES[self.device_mode])
-                raise ValueError(
-                    f"route spec not found for device_mode={self.device_mode!r}, "
-                    f"route_code={self.route_code!r}; expected route_code in {valid_route_codes}"
-                )
-            self._route_stages: List[List[str]] = list(stages)  # 用于节拍分析器
-            _bootstrap_route_meta = parse_route(stages, BUFFER_NAMES)
-            if self.device_mode == "cascade" and self.route_code == 4:
-                _bootstrap_route_meta["u_targets"]["LLD"] = ["PM7", "LP_done"]
-            self.chambers = tuple(_bootstrap_route_meta["chambers"])
-            self._timeline_chambers = tuple(_bootstrap_route_meta["timeline_chambers"])
-            self._u_targets = dict(_bootstrap_route_meta["u_targets"])
-            self._step_map = dict(_bootstrap_route_meta["step_map"])
-            self._release_station_aliases = dict(_bootstrap_route_meta["release_station_aliases"])
-            self._release_chain_by_u = dict(_bootstrap_route_meta["release_chain_by_u"])
-            self._system_entry_places = set(_bootstrap_route_meta["system_entry_places"])
-            self._ready_chambers = tuple(_bootstrap_route_meta["chambers"])
-            self._single_process_chambers = self.chambers
-        else:
-            self._route_stages = []
-            # 配置驱动下，优先从目标 route 归一化结果提取 chambers（不含 source/sink/buffer）
-            _cfg = dict(self.single_route_config or {})
-            _cfg_chambers = dict(_cfg.get("chambers") or {})
-            _routes = dict(_cfg.get("routes") or {})
-            _selected_route_name = self._selected_single_route_name
+        self._route_stages = []
+        # 配置驱动下，优先从目标 route 归一化结果提取 chambers（不含 source/sink/buffer）
+        _cfg = dict(self.single_route_config or {})
+        _cfg_chambers = dict(_cfg.get("chambers") or {})
+        _routes = dict(_cfg.get("routes") or {})
+        _selected_route_name = self._selected_single_route_name
 
-            _route_chambers: List[str] = []
-            if _selected_route_name is not None:
-                try:
-                    _source_name = str((_cfg.get("source") or {}).get("name", "LP"))
-                    _sink_name = str((_cfg.get("sink") or {}).get("name", "LP_done"))
-                    _kind_map = {
-                        name: str((spec or {}).get("kind", "process"))
-                        for name, spec in _cfg_chambers.items()
-                    }
-                    _normalized = normalize_route_spec(
-                        route_name=str(_selected_route_name),
-                        route_cfg=dict(_routes.get(_selected_route_name) or {}),
-                        source_name=_source_name,
-                        sink_name=_sink_name,
-                        chamber_kind_map=_kind_map,
-                    )
-                    self._route_stages = [
-                        list(stage.candidates) for stage in _normalized[1:-1]
-                    ]
-                    for stage in _normalized[1:-1]:
-                        if str(stage.stage_type) != "buffer":
-                            for name in stage.candidates:
-                                if name not in _route_chambers:
-                                    _route_chambers.append(name)
-                except Exception:
-                    _route_chambers = []
-
-            if _route_chambers:
-                self.chambers = tuple(_route_chambers)
-            else:
-                self.chambers = tuple(
-                    name
+        _route_chambers: List[str] = []
+        if _selected_route_name is not None:
+            try:
+                _source_name = str((_cfg.get("source") or {}).get("name", "LP"))
+                _sink_name = str((_cfg.get("sink") or {}).get("name", "LP_done"))
+                _kind_map = {
+                    name: str((spec or {}).get("kind", "process"))
                     for name, spec in _cfg_chambers.items()
-                    if str((spec or {}).get("kind", "process")) != "buffer"
-                ) or tuple(_cfg_chambers.keys())
-            self._timeline_chambers = self.chambers
-            self._u_targets = {}
-            self._step_map = {}
-            self._release_station_aliases = {}
-            self._release_chain_by_u = {}
-            self._system_entry_places = set()
-            self._ready_chambers = self.chambers
-            self._single_process_chambers = self.chambers
+                }
+                _normalized = normalize_route_spec(
+                    route_name=str(_selected_route_name),
+                    route_cfg=dict(_routes.get(_selected_route_name) or {}),
+                    source_name=_source_name,
+                    sink_name=_sink_name,
+                    chamber_kind_map=_kind_map,
+                )
+                self._route_stages = [
+                    list(stage.candidates) for stage in _normalized[1:-1]
+                ]
+                for stage in _normalized[1:-1]:
+                    if str(stage.stage_type) != "buffer":
+                        for name in stage.candidates:
+                            if name not in _route_chambers:
+                                _route_chambers.append(name)
+            except Exception:
+                _route_chambers = []
+
+        if _route_chambers:
+            self.chambers = tuple(_route_chambers)
+        else:
+            self.chambers = tuple(
+                name
+                for name, spec in _cfg_chambers.items()
+                if str((spec or {}).get("kind", "process")) != "buffer"
+            ) or tuple(_cfg_chambers.keys())
+        self._timeline_chambers = self.chambers
+        self._u_targets = {}
+        self._step_map = {}
+        self._release_station_aliases = {}
+        self._release_chain_by_u = {}
+        self._system_entry_places = set()
+        self._ready_chambers = self.chambers
+        self._single_process_chambers = self.chambers
 
         raw = dict(config.process_time_map or {})
         if self.single_route_config is not None:
