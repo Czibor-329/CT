@@ -19,7 +19,7 @@
   - 可视化 UI 实现细节。
 
 ## Architecture or Data Flow
-1. `construct_single.py` 根据 `device_mode + route_code` 构建网络结构与元数据。
+1. `construct_single.py` 的 `build_single_device_net` 仅基于 `route_config(+route_name)` 构建网络结构与元数据。
 2. `ClusterTool` 维护标识、使能判定、时间推进、reward 计算、违规统计。
 3. `Env_PN_Single` 封装 TorchRL 风格 `reset/step`，并暴露 `action_mask`。
 4. 训练脚本 `train_single.py` 调用 `collect_rollout_ultra` 执行 CPU rollout + batched PPO update。
@@ -29,7 +29,7 @@
 - 环境接口:
   - 类: `solutions.Continuous_model.env_single.Env_PN_Single`
   - 关键参数: `device_mode`, `robot_capacity`, `route_code`, `process_time_map`（可选）
-  - 配置驱动参数（可选）: `single_route_config`, `single_route_config_path`, `single_route_name`
+  - 配置驱动参数（必需构网输入）: `single_route_config`, `single_route_config_path`, `single_route_name`
 - 训练入口:
   - `python -m solutions.Continuous_model.train_single --device single --rollout-n-envs 1`
   - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`
@@ -42,8 +42,8 @@
   - `--sequence` 必填，脚本按仓库根目录 `seq/<json_name>` 解析。
 
 ## Behavior Rules
-1. 路径参数严格校验：`device_mode` 与 `route_code` 非法时直接报错。
-2. 当提供 `single_route_config` 时，构网优先走“配置驱动编译链”（`parse/normalize -> route IR -> token route -> net build`）；`route_code` 仅用于兼容 alias 选择。
+1. 构网输入严格校验：`build_single_device_net` 必须提供 `route_config`，未提供时直接报错。
+2. 构网固定走“配置驱动编译链”（`parse/normalize -> route IR -> token route -> net build`）；`route_code` 仅用于兼容 alias 选择，不再触发 legacy 手写拓扑分支。
 3. 当通过 `PetriEnvConfig.load(json)` 加载且 json 中提供 `single_route_config_path` 时，会自动读取该文件并填充 `single_route_config`。
 4. WAIT 掩码规则：存在加工完成待取片晶圆时，仅允许短 WAIT（5s）。
 5. 导出脚本的 `--out-name` 当前不参与文件命名，仅保留兼容。
@@ -73,6 +73,9 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-21: `construct_single.build_single_device_net` 收敛为 `route_config`-only；移除函数内部 legacy 手写拓扑分支。影响是：未提供 `single_route_config` 的调用链会直接报错，需要迁移到配置驱动路线输入。
+- 2026-03-21: `ClusterTool` 在 `single_route_name` 已设置时对同一路由只调用一次 `normalize_route_spec`，由该结果同时生成 stage 工时/清洗覆盖、`_route_stages` 与 chambers 顺序；移除后续宽泛 `try/except`，归一化或派生失败时不再静默回退到仅 `chambers` 配置的 chambers 列表。
+- 2026-03-21: `_normalize_route_code` 在非法 `device_mode` 时抛出 `ValueError`（含 `device_mode` 字样），不再因 `_VALID_ROUTE_CODES` 下标访问产生 `KeyError`。
 - 2026-03-20: 移除单设备「按 episode 随机缩放工序时长」能力：删除 `PetriEnvConfig.proc_rand_enabled`、`proc_time_rand_scale_map`、`chambers[].proc_rand_scale` 与 route stage `proc_rand_scale`；`train_single` 去掉 `--proc-time-rand-enabled`。
 - 2026-03-20: 删除 `_episode_proc_time_map` 及 `_refresh_episode_proc_time`、`_validate_episode_proc_time_map_consistency`、`_align_base_proc_time_map_with_route_chambers`；节拍与导出统一读 `_base_proc_time_map`（来自构网返回的 `process_time_map`）；工序预处理迁入 `construct_single.py`，`pn_single` 不再含 `_preprocess_process_time_map` / `_apply_base_proc_times_to_marks_and_ptime`。
 - 2026-03-20: 移除 `ClusterTool._rebuild_token_pool` / `_token_pool`；驻留 scrap 扫描改为遍历 `marks` 中腔室 token；删除无引用的 `_token_remaining_time`。
