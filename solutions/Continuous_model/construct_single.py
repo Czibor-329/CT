@@ -660,14 +660,12 @@ def _build_single_device_net_from_route_config(
 
     return {
         "m0": m0,
-        "md": md,
-        "pre": pre,
         "pre_color": pre_color,
-        "pst": pst,
+        "P": pre.shape[0],
+        "T": pre.shape[1],
         "pre_place_indices": pre_place_indices,
         "pst_place_indices": pst_place_indices,
         "transport_pre_place_idx": transport_pre_place_idx,
-        "ptime": ptime,
         "ttime": ttime_arr,
         "capacity": capacity,
         "id2p_name": id2p_name,

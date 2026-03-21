@@ -72,26 +72,6 @@ def _step_core_numpy(
 
 
 if njit is not None:
-    @njit(cache=True, fastmath=True)
-    def step_core_numba(
-        pre: np.ndarray,
-        m: np.ndarray,
-        k: np.ndarray,
-        pst: np.ndarray,
-        t_idx: int,
-    ) -> bool:
-        if t_idx < 0 or t_idx >= pre.shape[1]:
-            return False
-        p_count = pre.shape[0]
-        for p in range(p_count):
-            need = pre[p, t_idx]
-            if need > 0 and m[p] < need:
-                return False
-        for p in range(p_count):
-            if pst[p, t_idx] > 0 and m[p] >= k[p]:
-                return False
-        return True
-
     @njit(cache=True, fastmath=True, parallel=True)
     def step_core_batch_numba(
         pre: np.ndarray,
@@ -388,14 +368,10 @@ class ClusterTool:
         self._system_entry_places = set(route_meta.get("system_entry_places", set()))
         self._ready_chambers = tuple(route_meta.get("chambers", ()))
         self._single_process_chambers = self.chambers
-        self.pre: np.ndarray = info["pre"]
-        self.pre_color: np.ndarray = info.get("pre_color", self.pre[:, :, None])
-        self.pst: np.ndarray = info["pst"]
-        self.net: np.ndarray = self.pst - self.pre
+
+        self.pre_color: np.ndarray = info["pre_color"]
         self.m0: np.ndarray = info["m0"]
         self.m: np.ndarray = self.m0.copy()
-        self.md: np.ndarray = info["md"]
-        self.ptime: np.ndarray = info["ptime"]
         self.k: np.ndarray = info["capacity"]
         self.id2p_name: List[str] = info["id2p_name"]
         self.id2t_name: List[str] = info["id2t_name"]
@@ -407,37 +383,14 @@ class ClusterTool:
             v: k for k, v in self._t_route_code_map.items() if k.startswith("t_")
         }
         self.idle_idx: Dict[str, int] = info["idle_idx"]
-        self.P = self.pre.shape[0]
-        self.T = self.pre.shape[1]
-        self.ttime = int(np.max(info["ttime"])) if len(info["ttime"]) > 0 else 5
+        self.P = info["P"]
+        self.T = info["T"]
+        self.ttime = 5
 
         # 预计算的 pre/pst 库所索引与运输位索引（构网返回或本地计算以兼容旧版）
-        self._pre_place_indices: List[np.ndarray] = info.get("pre_place_indices")
-        self._pst_place_indices: List[np.ndarray] = info.get("pst_place_indices")
-        self._transport_pre_place_idx: List[int] = info.get("transport_pre_place_idx")
-        if (
-            self._pre_place_indices is None
-            or self._pst_place_indices is None
-            or self._transport_pre_place_idx is None
-        ):
-            self._pre_place_indices = [
-                np.flatnonzero(self.pre[:, t] > 0) for t in range(self.T)
-            ]
-            self._pst_place_indices = [
-                np.flatnonzero(self.pst[:, t] > 0) for t in range(self.T)
-            ]
-            self._transport_pre_place_idx = []
-            for t in range(self.T):
-                indices = self._pre_place_indices[t]
-                found = next(
-                    (
-                        int(idx)
-                        for idx in indices
-                        if self.id2p_name[int(idx)].startswith("d_")
-                    ),
-                    -1,
-                )
-                self._transport_pre_place_idx.append(found)
+        self._pre_place_indices: List[np.ndarray] = info["pre_place_indices"]
+        self._pst_place_indices: List[np.ndarray] = info["pst_place_indices"]
+        self._transport_pre_place_idx: List[int] = info["transport_pre_place_idx"]
 
         self.marks: List[Place] = self._clone_marks(info["marks"])
         # 临时执行策略：除 LP/LP_done 外全部按 unit-capacity 运行。
@@ -1338,41 +1291,6 @@ class ClusterTool:
                 self._t_transitions_by_transport.setdefault(transport, []).append(int(t_idx))
         self._llc_tm3_u_idx = self._u_transition_by_source_transport.get(("LLC", "d_TM3"))
 
-    def _transition_structurally_enabled(self, t_idx: int) -> bool:
-        m = self.m; pre = self.pre; net = self.net; k = self.k
-        # 数值核心优先走 numba（可选），失败时退回原路径。
-        try:
-            return bool(step_core_numba(pre, m, k, self.pst, int(t_idx)))
-        except Exception:
-            pass
-        pre_idx = self._pre_place_indices[t_idx]
-        n = pre_idx.size
-        if n == 1:
-            i = int(pre_idx[0])
-            if m[i] < pre[i, t_idx]:
-                return False
-        elif n == 2:
-            i0 = int(pre_idx[0]); i1 = int(pre_idx[1])
-            if m[i0] < pre[i0, t_idx] or m[i1] < pre[i1, t_idx]:
-                return False
-        elif n > 0:
-            if np.any(m[pre_idx] < pre[pre_idx, t_idx]):
-                return False
-        pst_idx = self._pst_place_indices[t_idx]
-        n = pst_idx.size
-        if n == 1:
-            j = int(pst_idx[0])
-            if m[j] + net[j, t_idx] > k[j]:
-                return False
-        elif n == 2:
-            j0 = int(pst_idx[0]); j1 = int(pst_idx[1])
-            if m[j0] + net[j0, t_idx] > k[j0] or m[j1] + net[j1, t_idx] > k[j1]:
-                return False
-        elif n > 0:
-            if np.any(m[pst_idx] + net[pst_idx, t_idx] > k[pst_idx]):
-                return False
-        return True
-
     def calc_wafer_statistics(self) -> Dict[str, Any]:
         system_times: List[float] = []
         chamber_stats: Dict[str, List[float]] = {}
@@ -1795,7 +1713,9 @@ class ClusterTool:
             cached = struct_enabled_cache.get(t_idx)
             if cached is not None:
                 return cached
-            result = bool(self._transition_structurally_enabled(t_idx))
+            result = not bool((self.m[int(self._pre_place_indices[t_idx][0])] < 1 or
+                      self.m[int(self._pst_place_indices[t_idx][0])] + 1 >
+                               self.k[int(self._pst_place_indices[t_idx][0])]))
             struct_enabled_cache[t_idx] = result
             return result
 
