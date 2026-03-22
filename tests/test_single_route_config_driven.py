@@ -18,14 +18,14 @@ def _demo_route_config():
         },
         "robots": {
             "TM2": {
-                "transport_place": "d_TM2",
+                "transport_place": "TM2",
                 "managed_chambers": ["LP", "PM7", "PM8", "PM9", "PM10", "LLC", "LLD", "LP_done"],
                 "dwell_time": 5,
                 "capacity": 1,
                 "priority": 10,
             },
             "TM3": {
-                "transport_place": "d_TM3",
+                "transport_place": "TM3",
                 "managed_chambers": ["LLC", "LLD"],
                 "dwell_time": 5,
                 "capacity": 1,
@@ -76,9 +76,9 @@ def test_config_driven_route_d_builds_transport_and_token_queue():
         route_name="route_D",
     )
 
-    assert "d_TM2" in info["id2p_name"]
-    assert "t_PM7" in info["id2t_name"]
-    assert "t_PM10" in info["id2t_name"]
+    assert "TM2" in info["id2p_name"]
+    assert "t_TM2_PM7" in info["id2t_name"]
+    assert "t_TM2_PM10" in info["id2t_name"]
     assert info["route_meta"]["u_targets"]["LP"] == ["PM7", "PM8"]
     assert info["route_meta"]["u_targets"]["PM7"] == ["PM9", "PM10"]
     assert info["route_meta"]["u_targets"]["PM10"] == ["LP_done"]
@@ -86,9 +86,15 @@ def test_config_driven_route_d_builds_transport_and_token_queue():
     q = info["token_route_queue_template"]
     assert q[0] == -1
     assert len(q) == 6
-    assert q[1] == (info["t_route_code_map"]["t_PM7"], info["t_route_code_map"]["t_PM8"])
-    assert q[3] == (info["t_route_code_map"]["t_PM9"], info["t_route_code_map"]["t_PM10"])
-    assert q[-1] == info["t_route_code_map"]["t_LP_done"]
+    assert q[1] == (
+        info["t_route_code_map"]["t_TM2_PM7"],
+        info["t_route_code_map"]["t_TM2_PM8"],
+    )
+    assert q[3] == (
+        info["t_route_code_map"]["t_TM2_PM9"],
+        info["t_route_code_map"]["t_TM2_PM10"],
+    )
+    assert q[-1] == info["t_route_code_map"]["t_TM2_LP_done"]
 
 
 def test_config_driven_repeat_route_generates_loop_u_targets_and_queue():
@@ -107,11 +113,11 @@ def test_config_driven_repeat_route_generates_loop_u_targets_and_queue():
     q = info["token_route_queue_template"]
     assert len(q) == 42
     assert q[0] == -1
-    assert q[1] == info["t_route_code_map"]["t_PM7"]
-    assert q[3] == info["t_route_code_map"]["t_PM8"]
-    assert q[5] == info["t_route_code_map"]["t_LLC"]
-    assert q[7] == info["t_route_code_map"]["t_LLD"]
-    assert q[-1] == info["t_route_code_map"]["t_LP_done"]
+    assert q[1] == info["t_route_code_map"]["t_TM2_PM7"]
+    assert q[3] == info["t_route_code_map"]["t_TM2_PM8"]
+    assert q[5] == info["t_route_code_map"]["t_TM2_LLC"]
+    assert q[7] == info["t_route_code_map"]["t_TM3_LLD"]
+    assert q[-1] == info["t_route_code_map"]["t_TM2_LP_done"]
 
     # LLD 在重复段既可能回 PM7，也可能在最后一轮去 LP_done
     assert info["route_meta"]["u_targets"]["LLD"] == ["PM7", "LP_done"]
@@ -131,7 +137,7 @@ def test_cluster_tool_accepts_single_route_config():
     assert net._u_targets["LP"] == ["PM7", "PM8"]
     assert net._u_targets["PM7"] == ["PM9", "PM10"]
     assert net._u_targets["PM9"] == ["LP_done"]
-    assert "d_TM2" in net.id2p_name
+    assert "TM2" in net.id2p_name
 
 
 def test_petri_env_config_loads_single_route_config_from_path():
@@ -165,5 +171,5 @@ def test_legacy_compatible_route_2_4_matches_route_code_5_topology():
     assert net._u_targets["LP"] == ["PM7", "PM8"]
     assert net._u_targets["PM7"] == ["PM9", "PM10"]
     assert net._u_targets["PM9"] == ["LP_done"]
-    assert "LLC" not in net.chambers
-    assert "LLD" not in net.chambers
+    assert "LLC" in net.chambers
+    assert "LLD" in net.chambers

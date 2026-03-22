@@ -1,17 +1,15 @@
 """
-单设备构网工具：输出与现有连续 Petri 构网一致的结构化信息。
-支持两种模板：
-- single: 原单设备路径（可由 route_code 细分）
-- cascade: 级联路径（route_code 可切换 1/2/3/4/5）
+级联设备构网工具（cascade-only）：输出连续 Petri 固定拓扑与动态路由装配结果。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 import numpy as np
-
+from solutions.Continuous_model.build_topology import get_topology
 from solutions.Continuous_model.construct import BasedToken
 from solutions.Continuous_model.helper_function import _preprocess_process_time_map as _hf_preprocess_process_time_map
 from solutions.Continuous_model.pn import LL, PM, Place, SR, TM
@@ -23,6 +21,11 @@ from solutions.Continuous_model.route_compiler_single import (
     build_token_route_plan,
     compile_route_stages,
 )
+
+SOURCE = 3
+ROBOT = 2
+CHAMBER = 1
+BUFFER = 4
 
 BUFFER_NAMES: Set[str] = {"LLC"}
 
@@ -53,6 +56,21 @@ CASCADE_TM2_TARGET_ONEHOT: Dict[str, int] = {
 CASCADE_TM3_TARGET_ONEHOT: Dict[str, int] = {
     name: idx for idx, name in enumerate(CASCADE_TM3_TARGET_ORDER)
 }
+
+
+
+
+def _build_route_source_target_transport(route_ir: RouteIR) -> Dict[Tuple[str, str], str]:
+    """按当前 route 生成 (source,target)->transport 映射，用于动态选择 u 变迁。"""
+    mapping: Dict[Tuple[str, str], str] = {}
+    for hop in route_ir.transports:
+        src_stage = route_ir.stages[hop.from_stage_idx]
+        dst_stage = route_ir.stages[hop.to_stage_idx]
+        transport_name = str(hop.transport_place).replace("d_", "")
+        for src in src_stage.candidates:
+            for dst in dst_stage.candidates:
+                mapping[(str(src), str(dst))] = transport_name
+    return mapping
 
 
 
@@ -180,127 +198,28 @@ def _route_ir_preprocess_chambers(
     return tuple(names)
 
 
-def preprocess_process_time_map_for_single_net(
-    process_time_map: Mapping[str, int],
-    chambers: Tuple[str, ...],
-    device_mode: str,
-    route_code: int,
-    route_config: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, int]:
+def preprocess_process_time_map(process_time_map: Mapping[str, int], chambers: Tuple[str, ...],
+                                route_config: Optional[Mapping[str, Any]] = None):
     """
     按腔室清单对工序时长做默认填充与取整到 5 秒（与 helper_function 一致）。
     chambers 不含 buffer 库所（如 LLC）时，后者不走本预处理。
     """
     raw = dict(process_time_map)
-    mode = str(device_mode).lower()
-    rc = int(route_code)
 
-    if route_config is not None:
-        cfg_ch = dict(route_config.get("chambers") or {})
-        defaults = {
-            name: int((spec or {}).get("process_time", 0))
-            for name, spec in cfg_ch.items()
-            if name in chambers
-        }
-        missing = sorted(c for c in chambers if c not in raw and c not in defaults)
-        if missing:
-            raise ValueError(
-                "missing default process times for chambers: "
-                f"{missing}; device_mode={mode!r}, route_code={rc!r}"
-            )
-        return dict(_hf_preprocess_process_time_map(raw, chambers, defaults))
-
-    if mode == "cascade":
-        if rc == 4:
-            defaults = {
-                "PM7": 70,
-                "PM8": 70,
-                "LLD": 70,
-            }
-        elif rc == 5:
-            defaults = {
-                "PM7": 70,
-                "PM8": 70,
-                "PM9": 200,
-                "PM10": 200,
-            }
-        else:
-            pm_stage3_default = 600 if rc == 1 else 300
-            defaults = {
-                "PM7": 70,
-                "PM8": 70,
-                "PM1": pm_stage3_default,
-                "PM2": pm_stage3_default,
-                "LLD": 70,
-            }
-            if rc != 3:
-                defaults.update({"PM9": 200, "PM10": 200})
-            if rc == 1:
-                defaults.update({"PM3": pm_stage3_default, "PM4": pm_stage3_default})
-    else:
-        defaults = {"PM1": 100, "PM3": 300, "PM4": 300, "PM6": 300}
-
+    cfg_ch = dict(route_config.get("chambers") or {})
+    defaults = {
+        name: int((spec or {}).get("process_time", 0))
+        for name, spec in cfg_ch.items()
+        if name in chambers
+    }
     missing = sorted(c for c in chambers if c not in raw and c not in defaults)
     if missing:
         raise ValueError(
             "missing default process times for chambers: "
-            f"{missing}; device_mode={mode!r}, route_code={rc!r}"
+            f"{missing}"
         )
     return dict(_hf_preprocess_process_time_map(raw, chambers, defaults))
 
-
-def _build_pre_color_from_route_queue(
-    pre: np.ndarray,
-    id2t_name: List[str],
-    route_queue: Tuple[object, ...],
-    t_route_code_map: Dict[str, int],
-) -> np.ndarray:
-    """
-    从 token.route_queue 模板反推 pre_color（兼容字段）。
-    """
-    p_count, t_count = pre.shape
-    max_where = max(1, len(route_queue)) + 1
-    pre_color = np.zeros((p_count, t_count, max_where), dtype=int)
-    for tid, t_name in enumerate(id2t_name):
-        if t_name.startswith("u_"):
-            pre_color[:, tid, :] = pre[:, tid][:, None]
-            continue
-        t_code = int(t_route_code_map.get(t_name, -1))
-        allowed_where: List[int] = []
-        for where_idx, gate in enumerate(route_queue):
-            if gate == -1:
-                continue
-            if isinstance(gate, int):
-                if gate == t_code:
-                    allowed_where.append(where_idx)
-            elif isinstance(gate, (tuple, list, set, frozenset)):
-                if t_code in gate:
-                    allowed_where.append(where_idx)
-        for c in allowed_where:
-            pre_color[:, tid, c] = pre[:, tid]
-    return pre_color
-
-
-def _resolve_route_name(
-    route_cfg: Mapping[str, Any],
-    mode: str,
-    route_code: int,
-    route_name: Optional[str],
-) -> str:
-    routes = route_cfg.get("routes") or {}
-    if not isinstance(routes, Mapping) or not routes:
-        raise ValueError("route_config.routes must be a non-empty mapping")
-    if route_name and route_name in routes:
-        return str(route_name)
-    legacy_alias = (
-        route_cfg.get("legacy", {})
-        .get("route_code_alias", {})
-        .get(mode, {})
-    )
-    aliased = legacy_alias.get(str(route_code))
-    if aliased and aliased in routes:
-        return str(aliased)
-    return str(next(iter(routes.keys())))
 
 
 def _build_single_device_net_from_route_config(
@@ -314,13 +233,18 @@ def _build_single_device_net_from_route_config(
     route_config: Mapping[str, Any],
     route_name: Optional[str],
 ) -> Dict[str, object]:
+    """构建 cascade 运行网：固定 place 拓扑 + route 动态变迁集合。"""
     process_time_map = process_time_map or {}
     mode = str(device_mode).lower()
     source_cfg = dict(route_config.get("source") or {"name": "LP", "capacity": max(1, n_wafer)})
     sink_cfg = dict(route_config.get("sink") or {"name": "LP_done", "capacity": max(1, n_wafer)})
     source_name = str(source_cfg.get("name", "LP"))
     sink_name = str(sink_cfg.get("name", "LP_done"))
-    selected_route_name = _resolve_route_name(route_config, mode=mode, route_code=int(route_code), route_name=route_name)
+    if source_name != "LP" or sink_name != "LP_done":
+        raise ValueError(
+            "cascade fixed topology requires source=LP and sink=LP_done"
+        )
+    selected_route_name = route_name
 
     chambers_cfg = dict(route_config.get("chambers") or {})
     chamber_kind_map: Dict[str, str] = {}
@@ -331,10 +255,11 @@ def _build_single_device_net_from_route_config(
     robots_cfg: Dict[str, CompiledRobotSpec] = {}
     for rb_name, rb in robots_cfg_raw.items():
         managed = tuple(str(x) for x in (rb or {}).get("managed_chambers", ()))
+        transport_place = str((rb or {}).get("transport_place", str(rb_name))).replace("d_", "")
         robots_cfg[str(rb_name)] = CompiledRobotSpec(
             name=str(rb_name),
             managed_chambers=managed,
-            transport_place=str((rb or {}).get("transport_place", f"d_{rb_name}")),
+            transport_place=transport_place,
             priority=int((rb or {}).get("priority", 0)),
         )
 
@@ -394,94 +319,90 @@ def _build_single_device_net_from_route_config(
     ch_pre = _route_ir_preprocess_chambers(route_ir, source_name, sink_name)
     merged_for_preprocess: Dict[str, int] = dict(process_time_map)
     merged_for_preprocess.update(route_stage_proc_time)
-    processed_pt = preprocess_process_time_map_for_single_net(
-        merged_for_preprocess,
-        ch_pre,
-        mode,
-        int(route_code),
-        route_config,
+    processed_pt = preprocess_process_time_map(merged_for_preprocess, ch_pre, route_config)
+
+    static_topology = get_topology()
+    id2p_name = list(static_topology["id2p_name"])
+    all_t_names = list(static_topology["id2t_name"])
+    all_pre = np.array(static_topology["pre"], dtype=int)
+    all_pst = np.array(static_topology["pst"], dtype=int)
+    all_t_target_place = dict(static_topology["t_target_place"])
+
+    # ===== 根据路径信息动态选择变迁 =====
+    route_source_target_transport = _build_route_source_target_transport(route_ir)
+    active_u_names: Set[str] = set()
+    active_t_names: Set[str] = set()
+    stage_target_order: List[str] = []
+    stage_target_seen: Set[str] = set()
+    for stage in route_ir.stages[1:]:
+        for dst in stage.candidates:
+            d = str(dst)
+            if d not in stage_target_seen:
+                stage_target_seen.add(d)
+                stage_target_order.append(d)
+    for (src, dst), transport in route_source_target_transport.items():
+        active_u_names.add(f"u_{src}_{transport}")
+        active_t_names.add(f"t_{transport}_{dst}")
+
+    # 筛选出路径中设计的变迁，对t_*变迁来说，记录其目标
+    selected_t_indices: List[int] = []
+    id2t_name: List[str] = []
+    t_target_place: Dict[str, str] = {}
+    for idx, t_name in enumerate(all_t_names):
+        if t_name.startswith("u_") and t_name in active_u_names:
+            selected_t_indices.append(idx)
+            id2t_name.append(t_name)
+            continue
+        if t_name.startswith("t_") and t_name in active_t_names:
+            selected_t_indices.append(idx)
+            id2t_name.append(t_name)
+            target = all_t_target_place.get(t_name)
+            if target is not None:
+                t_target_place[t_name] = str(target)
+
+    if not id2t_name:
+        raise ValueError("route produced empty transition set")
+
+    pre = np.array(all_pre[:, selected_t_indices], dtype=int)
+    pst = np.array(all_pst[:, selected_t_indices], dtype=int)
+    t_count = len(id2t_name)
+
+    # ======= 构造晶圆路由队列 ===========
+    target_code_map: Dict[str, int] = {
+        name: i + 1 for i, name in enumerate(stage_target_order)
+    }
+    t_route_code_map: Dict[str, int] = {}
+    for t_name in id2t_name:
+        if not t_name.startswith("t_"):
+            continue
+        target = t_target_place.get(t_name)
+        if target is None:
+            continue
+        code = int(target_code_map.get(str(target), -1))
+        if code > 0:
+            t_route_code_map[t_name] = code
+
+    route_queue: List[object] = []
+    for idx in range(len(route_ir.stages) - 1):
+        route_queue.append(-1)
+        next_stage = route_ir.stages[idx + 1]
+        gate_codes: List[int] = []
+        for dst in next_stage.candidates:
+            code = int(target_code_map.get(str(dst), -1))
+            if code > 0:
+                gate_codes.append(code)
+        if len(gate_codes) == 1:
+            route_queue.append(gate_codes[0])
+        else:
+            route_queue.append(tuple(gate_codes))
+    token_route_queue = tuple(route_queue)
+
+    token_plan: TokenRoutePlan = build_token_route_plan(
+        route_ir=route_ir,
+        transition_names=[f"t_{name}" for name in stage_target_order],
     )
 
-    # Place 顺序：source -> route 中出现的 chambers -> sink -> transport places
-    id2p_name: List[str] = []
-    seen_places: Set[str] = set()
-
-    def add_place_name(name: str) -> None:
-        if name not in seen_places:
-            seen_places.add(name)
-            id2p_name.append(name)
-
-    add_place_name(source_name)
-    for stage in route_ir.stages[1:-1]:
-        for c in stage.candidates:
-            add_place_name(c)
-    add_place_name(sink_name)
-
-    # 兼容旧级联 route5/route4：即使未使用也保留 TM3 展示位
-    for rb_name in (route_config.get("robots") or {}):
-        rb_cfg = route_config["robots"][rb_name]
-        add_place_name(str(rb_cfg.get("transport_place", f"d_{rb_name}")))
-
-    # 统计每个 source 对应的 transport 集合；若同一 source 有多个 transport 则需分离 u_* 变迁
-    src_to_transports: Dict[str, Set[str]] = {}
-    for hop in route_ir.transports:
-        src_stage = route_ir.stages[hop.from_stage_idx]
-        d_place = hop.transport_place
-        for src in src_stage.candidates:
-            src_to_transports.setdefault(src, set()).add(d_place)
-
-    # Transition 顺序：按 hop 顺序先 u_* 再 t_*
-    id2t_name: List[str] = []
-    seen_t: Set[str] = set()
-
-    def add_transition(name: str) -> None:
-        if name not in seen_t:
-            seen_t.add(name)
-            id2t_name.append(name)
-
-    def u_transition_name(src: str, d_place: str) -> str:
-        """当同一 source 有多个 transport 时使用 u_{src}_{d_place}，否则 u_{src}"""
-        transports = src_to_transports.get(src, set())
-        if len(transports) > 1:
-            return f"u_{src}_{d_place}"
-        return f"u_{src}"
-
-    for hop in route_ir.transports:
-        src_stage = route_ir.stages[hop.from_stage_idx]
-        dst_stage = route_ir.stages[hop.to_stage_idx]
-        d_place = hop.transport_place
-        for src in src_stage.candidates:
-            add_transition(u_transition_name(src, d_place))
-        for dst in dst_stage.candidates:
-            add_transition(f"t_{dst}")
-
     p_idx = {name: i for i, name in enumerate(id2p_name)}
-    t_idx = {name: i for i, name in enumerate(id2t_name)}
-    p_count, t_count = len(id2p_name), len(id2t_name)
-    pre = np.zeros((p_count, t_count), dtype=int)
-    pst = np.zeros((p_count, t_count), dtype=int)
-
-    def add_arc(src: str, tr: str, dst: str) -> None:
-        if src not in p_idx or dst not in p_idx or tr not in t_idx:
-            return
-        # 同名变迁在 repeat 路径中会被多次引用；同一库所-变迁弧应保持单位权重，
-        # 不能因重复路径展开把权重累加到 >1（否则结构使能会错误要求多 token）。
-        pre[p_idx[src], t_idx[tr]] = 1
-        pst[p_idx[dst], t_idx[tr]] = 1
-
-    for hop in route_ir.transports:
-        src_stage = route_ir.stages[hop.from_stage_idx]
-        dst_stage = route_ir.stages[hop.to_stage_idx]
-        d_place = hop.transport_place
-        for src in src_stage.candidates:
-            add_arc(src, u_transition_name(src, d_place), d_place)
-        for dst in dst_stage.candidates:
-            add_arc(d_place, f"t_{dst}", dst)
-
-    token_plan: TokenRoutePlan = build_token_route_plan(route_ir=route_ir, transition_names=id2t_name)
-    token_route_queue = token_plan.route_queue_template
-    t_route_code_map = dict(token_plan.transition_code_map)
-    pre_color = _build_pre_color_from_route_queue(pre, id2t_name, token_route_queue, t_route_code_map)
 
     # 模块参数
     modules: Dict[str, SingleModuleSpec] = {}
@@ -495,10 +416,14 @@ def _build_single_device_net_from_route_config(
     for name in id2p_name:
         if name in {source_name, sink_name}:
             continue
-        if name.startswith("d_"):
+        if name in {"TM2", "TM3"}:
             # transport
             rb_cfg = next(
-                (dict(v) for v in (route_config.get("robots") or {}).values() if str(v.get("transport_place", "")) == name),
+                (
+                    dict(v)
+                    for v in (route_config.get("robots") or {}).values()
+                    if str(v.get("transport_place", "")).replace("d_", "") == name
+                ),
                 {},
             )
             modules[name] = SingleModuleSpec(
@@ -537,10 +462,10 @@ def _build_single_device_net_from_route_config(
     for hop in route_ir.transports:
         tp = str(hop.transport_place)
         dst_candidates = tuple(route_ir.stages[hop.to_stage_idx].candidates)
-        if mode == "cascade" and tp == "d_TM2":
+        if mode == "cascade" and tp == "TM2":
             tm_target_onehot_map[tp] = dict(CASCADE_TM2_TARGET_ONEHOT)
             continue
-        if mode == "cascade" and tp == "d_TM3":
+        if mode == "cascade" and tp == "TM3":
             tm_target_onehot_map[tp] = dict(CASCADE_TM3_TARGET_ONEHOT)
             continue
         m = tm_target_onehot_map.setdefault(tp, {})
@@ -561,41 +486,43 @@ def _build_single_device_net_from_route_config(
         name for name, cfg in chambers_cfg.items()
         if str((cfg or {}).get("kind", "")) == "buffer"
     }
+
+    # ============= 构造marks ==============
     marks: List[Place] = []
     for name in id2p_name:
         spec = modules[name]
         if name == source_name or name == sink_name:
-            ptype = 3
-        elif name.startswith("d_"):
-            ptype = 2
+            ptype = SOURCE
+        elif name in {"TM2", "TM3"}:
+            ptype = ROBOT
         else:
             kind = str((chambers_cfg.get(name) or {}).get("kind", "process"))
             ptype = 5 if kind in {"buffer", "loadlock"} else 1
 
         if obs_config is not None:
             if name == source_name:
-                place = SR(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype, n_wafer=n_wafer)
+                place = SR(name=name, capacity=100, processing_time=0, type=SOURCE, n_wafer=n_wafer)
             elif name == sink_name:
-                place = SR(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
-            elif name.startswith("d_"):
+                place = SR(name=name, capacity=100, processing_time=0, type=SOURCE)
+            elif name in {"TM2", "TM3"}:
                 tm_map = tm_target_onehot_map.get(name, {})
-                if mode == "cascade" and name == "d_TM2":
+                if mode == "cascade" and name == "TM2":
                     tm_map = dict(CASCADE_TM2_TARGET_ONEHOT)
-                elif mode == "cascade" and name == "d_TM3":
+                elif mode == "cascade" and name == "TM3":
                     tm_map = dict(CASCADE_TM3_TARGET_ONEHOT)
                 onehot_dim = max(tm_map.values(), default=-1) + 1 if tm_map else 0
                 place = TM(
                     name=name,
                     capacity=spec.capacity,
                     processing_time=spec.ptime,
-                    type=ptype,
+                    type=ROBOT,
                     D_Residual_time=d_res,
                     target_onehot_map=tm_map,
                     onehot_dim=onehot_dim,
                 )
             elif ptype == 5:
                 place = LL(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
-            elif ptype == 1:
+            elif ptype == CHAMBER:
                 c_dur = int(
                     route_stage_clean_dur.get(
                         name,
@@ -629,38 +556,37 @@ def _build_single_device_net_from_route_config(
         else:
             place = Place(name=name, capacity=spec.capacity, processing_time=spec.ptime, type=ptype)
 
-        if name == source_name:
-            for tok_id in range(n_wafer):
-                place.append(
-                    BasedToken(
-                        enter_time=0,
-                        token_id=tok_id,
-                        route_type=1,
-                        step=0,
-                        where=0,
-                        route_queue=token_route_queue,
-                        route_head_idx=0,
-                    )
-                )
         marks.append(place)
 
+    # ===== 注入token =====
+    LP_place = marks[p_idx[source_name]]
+    _add_token_to_LP(n_wafer, LP_place, token_route_queue)
+
     route_meta = build_route_meta_from_route_ir(route_ir, buffer_names=buffer_names or BUFFER_NAMES)
-    rm_ch = tuple(route_meta.get("chambers", ()))
-    process_time_map_out = {n: int(modules[n].ptime) for n in rm_ch if n in modules}
+    full_timeline_chambers = tuple(
+        name for name in id2p_name
+        if (name.startswith("PM") or name in {"LLC", "LLD"})
+    )
+    route_meta["chambers"] = full_timeline_chambers
+    route_meta["timeline_chambers"] = full_timeline_chambers
+    process_time_map_out = {
+        n: int(modules[n].ptime)
+        for n in full_timeline_chambers
+        if n in modules
+    }
 
     pre_place_indices: List[np.ndarray] = [np.flatnonzero(pre[:, t] > 0) for t in range(t_count)]
     pst_place_indices: List[np.ndarray] = [np.flatnonzero(pst[:, t] > 0) for t in range(t_count)]
     transport_pre_place_idx: List[int] = []
     for t in range(t_count):
         found = next(
-            (int(idx) for idx in pre_place_indices[t] if id2p_name[int(idx)].startswith("d_")),
+            (int(idx) for idx in pre_place_indices[t] if id2p_name[int(idx)] in {"TM2", "TM3"}),
             -1,
         )
         transport_pre_place_idx.append(int(found))
 
     return {
         "m0": m0,
-        "pre_color": pre_color,
         "P": pre.shape[0],
         "T": pre.shape[1],
         "pre_place_indices": pre_place_indices,
@@ -679,11 +605,30 @@ def _build_single_device_net_from_route_config(
         "single_device_mode": mode,
         "route_meta": route_meta,
         "t_route_code_map": t_route_code_map,
+        "t_target_place_map": t_target_place,
+        "route_source_target_transport": route_source_target_transport,
         "token_route_queue_template": token_route_queue,
         "token_route_plan_template": token_plan,
         "route_ir": route_ir,
         "process_time_map": process_time_map_out,
+        "fixed_topology": True,
     }
+
+
+def _add_token_to_LP(n_wafer: int, place: Place, token_route_queue: tuple[object, ...]):
+
+        for tok_id in range(n_wafer):
+            place.append(
+                BasedToken(
+                    enter_time=0,
+                    token_id=tok_id,
+                    route_type=1,
+                    step=0,
+                    where=0,
+                    route_queue=token_route_queue,
+                    route_head_idx=0,
+                )
+            )
 
 
 @dataclass
@@ -699,19 +644,19 @@ def build_single_device_net(
     robot_capacity: int = 1,
     process_time_map: Optional[Dict[str, int]] = None,
     route_code: int = 0,
-    device_mode: str = "single",
+    device_mode: str = "cascade",
     obs_config: Optional[Dict[str, Any]] = None,
     route_config: Optional[Mapping[str, Any]] = None,
     route_name: Optional[str] = None,
 ) -> Dict[str, object]:
     """
-    仅通过 route_config 构建 Petri 网结构。
+    构建 cascade-only 固定拓扑 Petri 网结构。
 
     约束：
     - route_config 必填，schema 需包含 source/sink/chambers/robots/routes
     - route_name 用于选择具体路线
-    - route_code 仅作为 legacy alias 选 route 的兼容入参，不再触发手写拓扑分支
-    - device_mode 仅用于编译链口径（single/cascade），不再走 legacy 构网逻辑
+    - route_code 仅用于兼容旧配置的路由别名选择
+    - device_mode 必须是 cascade，single 路径已下线
 
     返回 dict 除 pre/pst/m0/md/marks/id2p_name/id2t_name 等外，还包含预计算索引（供 get_enable_t/_fire 复用）：
     - pre_place_indices: List[np.ndarray]，pre_place_indices[t] 为变迁 t 的前置库所下标
@@ -722,6 +667,8 @@ def build_single_device_net(
     mode = str(device_mode).lower()
     raw_pm = dict(process_time_map or {})
     route_code = int(route_code)
+    if mode != "cascade":
+        raise ValueError("build_single_device_net now supports cascade only")
     if route_config is None:
         raise ValueError("build_single_device_net requires route_config")
     return _build_single_device_net_from_route_config(

@@ -1,12 +1,12 @@
 # PN Single Guide
 
 ## Abstract
-- What: 本文档定义单设备连续时间 Petri 网（pn_single）在当前仓库中的架构、接口与行为约束。
+- What: 本文档定义级联设备连续时间 Petri 网（pn_single）在当前仓库中的架构、接口与行为约束（cascade-only）。
 - When: 修改 `pn_single.py`、`env_single.py`、`train_single.py`、导出/追责脚本前必须先读。
 - Not: 不覆盖并发双机械手 `pn.py` 的完整实现细节。
 - Key rules:
-  - 单设备统一入口是 `Env_PN_Single`。
-- 旧版 place-obs 环境入口与观测切换参数已移除。
+  - 统一入口是 `Env_PN_Single`，且仅支持 `device_mode=cascade`。
+  - 构网采用固定全拓扑 + 动态 route 装配。
   - 关键执行链固定为 `构网 -> mask -> step -> reward`。
 
 ## Scope
@@ -21,20 +21,20 @@
 ## Architecture or Data Flow
 1. `construct_single.py` 的 `build_single_device_net` 仅基于 `route_config(+route_name)` 构建网络结构与元数据。
 2. `ClusterTool` 维护标识、使能判定、时间推进、reward 计算、违规统计。
-3. `Env_PN_Single` 封装 TorchRL 风格 `reset/step`，并暴露 `action_mask`。
+3. `Env_PN_Single` 封装 TorchRL 风格 `reset/step`，并暴露固定动作空间下的 `action_mask`。
 4. 训练脚本 `train_single.py` 调用 `collect_rollout_ultra` 执行 CPU rollout + batched PPO update。
 5. 导出脚本 `export_inference_sequence.py` 生成 `seq/tmp.json`（含 `sequence`、`replay_env_overrides`、`reward_report` 等）。
 
 ## Interfaces
 - 环境接口:
   - 类: `solutions.Continuous_model.env_single.Env_PN_Single`
-  - 关键参数: `device_mode`, `robot_capacity`, `route_code`, `process_time_map`（可选）
+  - 关键参数: `device_mode=cascade`, `robot_capacity`, `route_code`, `process_time_map`（可选）
   - 配置驱动参数（必需构网输入）: `single_route_config`, `single_route_config_path`, `single_route_name`
 - 训练入口:
-  - `python -m solutions.Continuous_model.train_single --device single --rollout-n-envs 1`
+  - `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1`
   - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`
 - 推理导出入口:
-  - `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`
+  - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`
   - 当前 action sequence 输出固定为 `seq/tmp.json`
   - 导出的 `replay_env_overrides` 会携带 `single_route_name`，并在可用时携带 `single_route_config`，用于可视化回放时保持与导出一致的构网路线
 - 二次释放惩罚验证入口:
@@ -42,8 +42,12 @@
   - `--sequence` 必填，脚本按仓库根目录 `seq/<json_name>` 解析。
 
 ## Behavior Rules
-1. 构网输入严格校验：`build_single_device_net` 必须提供 `route_config`，未提供时直接报错。
-2. 构网固定走“配置驱动编译链”（`parse/normalize -> route IR -> token route -> net build`）；`route_code` 仅用于兼容 alias 选择，不再触发 legacy 手写拓扑分支。
+1. 构网输入严格校验：`build_single_device_net` 必须提供 `route_config` 且 `device_mode` 必须是 `cascade`，否则直接报错。
+2. 构网固定走“固定拓扑 + 配置驱动 route 编译链”（`load/build static topology -> parse/normalize -> route IR -> token route -> dynamic marks/token`）；`route_code` 仅用于兼容 alias 选择，不再触发 legacy 手写拓扑分支。
+3. 固定拓扑包含 `LP, PM1-PM10, LLC, LLD, LP_done, TM2, TM3`。
+4. 变迁命名统一为 `u_src_dst` 与 `t_src_dst`；其中 `u_src_dst` 的 `dst` 是 `TM2/TM3`，`t_src_dst` 的 `src` 是 `TM2/TM3`。
+5. 不再兼容旧命名（`d_TM*`、`t_PM*` 等）；运行时仅消费新命名。
+6. 固定动作空间下，未被当前 route 使用的变迁必须在 `get_action_mask` 中恒为 0。
 3. 当通过 `PetriEnvConfig.load(json)` 加载且 json 中提供 `single_route_config_path` 时，会自动读取该文件并填充 `single_route_config`。
 4. WAIT 掩码规则：存在加工完成待取片晶圆时，仅允许短 WAIT（5s）。
 5. 导出脚本的 `--out-name` 当前不参与文件命名，仅保留兼容。
@@ -75,6 +79,9 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-21: 运输位命名从 `d_TM2/d_TM3` 统一为 `TM2/TM3`；变迁命名统一为 `u_src_dst/t_src_dst`，不再兼容旧命名。
+- 2026-03-21: 下线 single 路径：`Env_PN_Single`/`ClusterTool`/`build_single_device_net` 均收敛到 cascade-only；传入 `device_mode!=cascade` 会直接报错。
+- 2026-03-21: 构网切换为“固定全拓扑 + 动态 route 变迁集合 + 跨进程缓存”；未使用变迁在 mask 中恒为 0。
 - 2026-03-21: `get_action_mask` 的 d_TM 分支新增并行 gate 机器轮转筛选：当 `tok_gate` 为 `tuple/frozenset` 时，仅允许后置目标命中 `_cascade_round_robin_next.values()` 的 `t_*` 通过 mask。
 - 2026-03-21: 删除 `_peek_target_for_source_for_obs` 与 `_select_target_for_source`；`u_*` 使能改为 `_is_next_stage_available` 的“round-robin 指针单点判定”（指针目标满/清洗即直接屏蔽，不再回退其它候选）；`_fire` 不再执行目标重选与写入 `tok._target_place`；`LLC/LLD` 方向 one-hot 临时固定为全 0。
 - 2026-03-21: `construct_single.build_single_device_net` 收敛为 `route_config`-only；移除函数内部 legacy 手写拓扑分支。影响是：未提供 `single_route_config` 的调用链会直接报错，需要迁移到配置驱动路线输入。

@@ -1,5 +1,5 @@
 """
-单设备单动作 TorchRL 环境封装。
+级联设备单动作 TorchRL 环境封装（cascade-only）。
 
 训练时请使用 device="cpu"：环境内部为 NumPy/CPU，_step 返回的 TensorDict 均在 CPU，
 由 train_single 在 CPU 上采集 rollout 后再 .to(device) 送入 GPU 计算。
@@ -81,7 +81,7 @@ class Env_PN_Single(EnvBase):
         device: str = "cpu",
         seed=None,
         eval_mode: bool = False,
-        device_mode: str = "single",
+        device_mode: str = "cascade",
         reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
         route_code: Optional[int] = None,
@@ -95,9 +95,9 @@ class Env_PN_Single(EnvBase):
 
         dir = Path(__file__).parents[2] / "data" / "petri_configs"
         mode_name = str(device_mode).lower()
-        if mode_name not in {"single", "cascade"}:
-            mode_name = "single"
-        path = dir / ("cascade.json" if mode_name == "cascade" else "single.json")
+        if mode_name != "cascade":
+            raise ValueError("Env_PN_Single now supports cascade mode only")
+        path = dir / "cascade.json"
         config = PetriEnvConfig().load(path=path)
         if reward_config:
             config.reward_config.update(reward_config)

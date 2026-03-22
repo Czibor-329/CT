@@ -114,7 +114,6 @@ else:
 
 class ClusterTool:
     _VALID_ROUTE_CODES: Dict[str, Set[int]] = {
-        "single": {0, 1},
         "cascade": {1, 2, 3, 4, 5, 6},
     }
 
@@ -246,7 +245,9 @@ class ClusterTool:
         }
         self.wait_durations = _normalize_wait_durations(config.wait_durations)
         
-        self.device_mode = config.device_mode
+        self.device_mode = str(config.device_mode).lower()
+        if self.device_mode != "cascade":
+            raise ValueError("ClusterTool now supports cascade mode only")
         self.route_code = self._normalize_route_code(config.route_code, self.device_mode)
         self.config.device_mode = self.device_mode
         self.config.route_code = self.route_code
@@ -374,12 +375,25 @@ class ClusterTool:
         self.id2p_name: List[str] = info["id2p_name"]
         self.id2t_name: List[str] = info["id2t_name"]
         self._t_route_code_map: Dict[str, int] = dict(info.get("t_route_code_map") or {})
+        self._t_target_place_map: Dict[str, str] = dict(info.get("t_target_place_map") or {})
+        self._route_source_target_transport: Dict[Tuple[str, str], str] = dict(
+            info.get("route_source_target_transport") or {}
+        )
         self._t_route_code_by_idx: List[int] = [
             int(self._t_route_code_map.get(name, -1)) for name in self.id2t_name
         ]
-        self._t_code_to_target: Dict[int, str] = {
-            v: k for k, v in self._t_route_code_map.items() if k.startswith("t_")
-        }
+        self._t_code_to_place: Dict[int, str] = {}
+        for t_name, t_code in self._t_route_code_map.items():
+            if not str(t_name).startswith("t_"):
+                continue
+            if int(t_code) < 0:
+                continue
+            target = self._t_target_place_map.get(str(t_name))
+            if target is None and str(t_name).startswith("t_"):
+                parts = str(t_name).split("_")
+                target = parts[-1] if len(parts) >= 2 else str(t_name)[2:]
+            if target is not None:
+                self._t_code_to_place[int(t_code)] = str(target)
         self.idle_idx: Dict[str, int] = info["idle_idx"]
         self.P = info["P"]
         self.T = info["T"]
@@ -389,6 +403,7 @@ class ClusterTool:
         self._pre_place_indices: List[np.ndarray] = info["pre_place_indices"]
         self._pst_place_indices: List[np.ndarray] = info["pst_place_indices"]
         self._transport_pre_place_idx: List[int] = info["transport_pre_place_idx"]
+        self._fixed_topology: bool = bool(info.get("fixed_topology", False))
 
         self.marks: List[Place] = self._clone_marks(info["marks"])
 
@@ -675,7 +690,7 @@ class ClusterTool:
 
     def _get_obs_place_order(self) -> List[str]:
         """返回观测顺序：LP + 运输位 + 腔室。"""
-        tm_names = ["d_TM2", "d_TM3"] if self.device_mode == "cascade" else ["d_TM1"]
+        tm_names = ["TM2", "TM3"] if self.device_mode == "cascade" else ["TM1"]
         tm_names = [n for n in tm_names if n in self.id2p_name]
         candidates = list(self.chambers)
         if self.device_mode == "cascade" and "LLC" not in candidates:
@@ -963,8 +978,8 @@ class ClusterTool:
             tok._dst_level_targets = tuple(self._u_targets.get(src, []))
             tok.machine = int(self._next_robot_machine())
             if self._is_cascade:
-                transport = pst_place.name if pst_place.name.startswith("d_") else "d_TM2"
-                tok.machine = 2 if transport == "d_TM3" else 1
+                transport = pst_place.name if pst_place.name in {"TM2", "TM3"} else "TM2"
+                tok.machine = 2 if transport == "TM3" else 1
             self._advance_round_robin_after_u_fire(src)
             if src in self._chamber_active and wafer_id in self._chamber_active[src]:
                 idx = self._chamber_active[src].pop(wafer_id)
@@ -972,7 +987,7 @@ class ClusterTool:
                 self._chamber_timeline[src][idx] = (e, start_time, wid)
             self._on_processing_unload(src)
         elif t_name.startswith("t_"):
-            target = t_name[2:]
+            target = pst_place.name
             tok._dst_level_targets = None
             tok.step = max(tok.step, self._step_map.get(target, 0))
             self._track_enter(tok, target)
@@ -992,7 +1007,7 @@ class ClusterTool:
         tok._place_idx = pst_place_idx
         self.m[pre_place_idx] -= 1
         self.m[pst_place_idx] += 1
-        if t_name == "u_LP":
+        if t_name.startswith("u_LP_"):
             self.entered_wafer_count += 1
             self._last_u_LP_fire_time = int(start_time)
             self._u_LP_release_count += 1
@@ -1038,7 +1053,7 @@ class ClusterTool:
         return fired_token_id >= 0 and fired_token_id == scrap_token_id
 
     def _token_next_target(self, tok: BasedToken) -> Optional[str]:
-        """从 token 的 route_queue 推断下一个目标腔室（用于多 transport 的 u_* 选择）。"""
+        """从 token 的 route_queue 推断下一个目标腔室（用于 u_* 选择）。"""
         queue = tok.route_queue
         if not queue:
             return None
@@ -1050,16 +1065,10 @@ class ClusterTool:
                 idx += 1
                 continue
             if isinstance(gate, int):
-                t_name = self._t_code_to_target.get(gate)
-                if t_name:
-                    return t_name[2:] if t_name.startswith("t_") else t_name
-                return None
+                return self._t_code_to_place.get(int(gate))
             if isinstance(gate, (tuple, list, set, frozenset)) and gate:
                 first = next(iter(gate))
-                t_name = self._t_code_to_target.get(int(first))
-                if t_name:
-                    return t_name[2:] if t_name.startswith("t_") else t_name
-                return None
+                return self._t_code_to_place.get(int(first))
             idx += 1
         return None
 
@@ -1088,6 +1097,7 @@ class ClusterTool:
         return target_name in self._cascade_round_robin_next.values()
 
     def _route4_next_target_from_token(self, tok: BasedToken) -> Optional[str]:
+        """从 route_queue 下一 gate 推断目标库所名（route4 专用）。"""
         queue = tok.route_queue
         if not queue:
             return None
@@ -1099,11 +1109,7 @@ class ClusterTool:
         next_gate = queue[next_idx]
         if not isinstance(next_gate, int):
             return None
-        if next_gate == int(self._t_route_code_map.get("t_PM7", -999)):
-            return "PM7"
-        if next_gate == int(self._t_route_code_map.get("t_LP_done", -998)):
-            return "LP_done"
-        return None
+        return self._t_code_to_place.get(int(next_gate))
 
     def _select_route4_lld_target(
         self,
@@ -1171,7 +1177,7 @@ class ClusterTool:
 
     def _llc_tm3_takt_required_interval(self) -> Optional[int]:
         """
-        返回下一次允许 LLC→d_TM3（u_LLC）出片的最小间隔（秒）。
+        返回下一次允许 LLC→TM3（u_LLC）出片的最小间隔（秒）。
         口径与 _takt_required_interval（u_LP）一致：release_count<=0 时不门控。
         """
         takt = self._llc_tm3_takt_result
@@ -1219,14 +1225,15 @@ class ClusterTool:
                 if pre_idx.size >= 1 and pst_idx.size >= 1:
                     src = self.id2p_name[int(pre_idx[0])]
                     dst = self.id2p_name[int(pst_idx[0])]
-                    if dst.startswith("d_"):
+                    if dst in {"TM2", "TM3"}:
                         self._u_transition_by_source_transport[(src, dst)] = int(t_idx)
                     self._u_transition_by_source[src] = int(t_idx)
             elif t_name.startswith("t_"):
-                target = t_name[2:]
-                transport = self._transport_for_t_target(target)
+                transport = self._transition_transport_place(int(t_idx))
+                if transport is None:
+                    continue
                 self._t_transitions_by_transport.setdefault(transport, []).append(int(t_idx))
-        self._llc_tm3_u_idx = self._u_transition_by_source_transport.get(("LLC", "d_TM3"))
+        self._llc_tm3_u_idx = self._u_transition_by_source_transport.get(("LLC", "TM3"))
 
     def calc_wafer_statistics(self) -> Dict[str, Any]:
         system_times: List[float] = []
@@ -1327,7 +1334,7 @@ class ClusterTool:
 
         proc_places = set(self._base_proc_time_map.keys())
         out_of_stage_proc_places = sorted(proc_places - stage_place_set)
-        if out_of_stage_proc_places:
+        if out_of_stage_proc_places and not self._fixed_topology:
             raise ValueError(
                 "takt stage mismatch: process_time map has out-of-route places: "
                 f"{out_of_stage_proc_places}; device_mode={self.device_mode!r}, "
@@ -1388,20 +1395,34 @@ class ClusterTool:
     def _get_place_index(self, name: str) -> int:
         return self.id2p_name.index(name)
 
-    def _transport_for_t_target(self, target: str) -> str:
-        if self.device_mode != "cascade":
-            return "d_TM1"
-        # 优先按实际构网弧推断 transport，避免对 LLD 等目标做硬编码误判。
-        t_name = f"t_{target}"
-        if t_name in self.id2t_name:
-            t_idx = int(self.id2t_name.index(t_name))
-            for p_i in self._pre_place_indices[t_idx]:
-                p_name = self.id2p_name[int(p_i)]
-                if p_name.startswith("d_"):
-                    return p_name
+    def _transition_target_place(self, t_idx: int) -> Optional[str]:
+        """根据变迁后置库所索引返回目标库所名，避免依赖 t_* 命名格式。"""
+        if t_idx < 0 or t_idx >= len(self._pst_place_indices):
+            return None
+        pst_idx = self._pst_place_indices[int(t_idx)]
+        if pst_idx.size == 0:
+            return None
+        return str(self.id2p_name[int(pst_idx[0])])
+
+    def _transition_transport_place(self, t_idx: int) -> Optional[str]:
+        """根据变迁前置库所索引返回运输位库所名。"""
+        if t_idx < 0 or t_idx >= len(self._pre_place_indices):
+            return None
+        pre_idx = self._pre_place_indices[int(t_idx)]
+        for p_i in pre_idx:
+            p_name = str(self.id2p_name[int(p_i)])
+            if p_name in {"TM2", "TM3"}:
+                return p_name
+        return None
+
+    def _transport_for_t_target(self, source: str, target: str) -> str:
+        """按当前 route 的 hop 映射选择 source->target 的 transport。"""
+        mapped = self._route_source_target_transport.get((str(source), str(target)))
+        if mapped:
+            return str(mapped)
         if target in {"PM1", "PM2", "PM3", "PM4", "PM5", "PM6"}:
-            return "d_TM3"
-        return "d_TM2"
+            return "TM3"
+        return "TM2"
 
     def _init_cleaning_state(self) -> None:
         for p in self.marks:
@@ -1427,7 +1448,7 @@ class ClusterTool:
             tokens = place.tokens
             if len(tokens) == 0:
                 continue
-            if place.is_dtm:
+            if place.is_dtm or place.name in {"TM2", "TM3"}:
                 for tok in tokens:
                     delta = t_transport - tok.stay_time
                     if delta < 0:
@@ -1602,14 +1623,16 @@ class ClusterTool:
             struct_enabled_cache[t_idx] = result
             return result
 
-        # 优先检查 u_LP
-        u_lp_idx = self._u_transition_by_source.get("LP")
-        if u_lp_idx is not None and self._allow_start():
-            lp_available, _ = self._is_next_stage_available("LP")
-            if _is_struct_enabled(u_lp_idx) and lp_available:
-                t_idx = int(u_lp_idx)
-                if 0 <= t_idx < total_actions:
-                    mask[t_idx] = True
+        # 优先检查 LP 出片：按当前指针目标动态选择 LP->TM2/TM3 的 u 变迁。
+        if self._allow_start():
+            lp_available, lp_target = self._is_next_stage_available("LP")
+            if lp_available and lp_target is not None:
+                lp_transport = self._transport_for_t_target("LP", str(lp_target))
+                u_lp_idx = self._u_transition_by_source_transport.get(("LP", lp_transport))
+                if u_lp_idx is not None and _is_struct_enabled(int(u_lp_idx)):
+                    t_idx = int(u_lp_idx)
+                    if 0 <= t_idx < total_actions:
+                        mask[t_idx] = True
 
         has_ready_chamber = False
         ready_chambers = self._ready_chambers_set
@@ -1617,7 +1640,6 @@ class ClusterTool:
         timed = self._MASK_TIMED_TYPES
         t_trans_by_transport = self._t_transitions_by_transport
         u_trans_by_source = self._u_transition_by_source
-        id2t = self.id2t_name
         route_code_by_idx = self._t_route_code_by_idx
         route_gate_allows = self._route_gate_allows_t
         place_by_name = self._place_by_name
@@ -1634,13 +1656,15 @@ class ClusterTool:
 
             is_timed = p_type in timed
 
-            if place.is_dtm:
+            if place.is_dtm or place.name in {"TM2", "TM3"}:
                 for tok in tokens:
                     if is_timed and proc_time > 0 and tok.stay_time < proc_time:
                         continue
                     tok_gate = tok.route_queue[tok.route_head_idx]
                     for t_idx in t_trans_by_transport.get(pname, ()):
-                        target = id2t[t_idx][2:]
+                        target = self._transition_target_place(int(t_idx))
+                        if target is None:
+                            continue
                         if not self._allow_t_by_machine_round_robin(pname, target, tok_gate):
                             continue
                         if not route_gate_allows(tok_gate, route_code_by_idx[t_idx]):
@@ -1659,7 +1683,7 @@ class ClusterTool:
                 route_target = self._token_next_target(head)
                 available, target = self._is_next_stage_available(source=pname)
                 if available and target is not None:
-                    transport = self._transport_for_t_target(str(target))
+                    transport = self._transport_for_t_target(pname, str(target))
                     u_idx = self._u_transition_by_source_transport.get((pname, transport))
                     if u_idx is None:
                         u_idx = u_trans_by_source.get(pname)

@@ -5,13 +5,13 @@
 - When: 启动训练、更新训练参数、排查训练产物时使用。
 - Not: 不覆盖 Td_petri 的链式搜索策略实现。
 - Key rules:
-  - 单设备训练入口是 `train_single.py`。
+  - 级联训练入口是 `train_single.py --device cascade`。
   - 并发训练入口是 `train_concurrent.py`。
   - 命令示例必须与脚本实际参数一致。
 
 ## Scope
 - In:
-  - single/cascade/concurrent 训练入口。
+  - cascade/concurrent 训练入口。
   - 配置来源与覆盖关系。
   - 输出模型路径与日志观察点。
 - Out:
@@ -27,27 +27,27 @@
 
 ## Interfaces
 - 单设备训练:
-  - `python -m solutions.Continuous_model.train_single --device single --rollout-n-envs 1`
+  - `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1`
   - 参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`
 - 并发训练:
   - `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
   - 参数: `--config`, `--checkpoint`
 - 导出推理序列:
-  - `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`（输出 `seq/tmp.json`）
+  - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`（输出 `seq/tmp.json`）
 - 关键配置优先级:
-  - single: `s_train.json` 作为基础，CLI 参数覆盖。
+  - cascade: `s_train.json` 作为基础，CLI 参数覆盖。
   - concurrent: `--config` 文件优先，不存在时退回默认配置对象。
 
 ## Behavior Rules
-1. 训练文档必须同时列出 single 与 concurrent 入口，不混用参数。
+1. 训练文档必须同时列出 cascade 与 concurrent 入口，不混用参数。
 2. 产物说明必须区分“公共 best 路径”和“时间戳备份目录”。
-3. 当前实现约束必须如实记录（例如 single best 固定写入 `models/tmp.pt`）。
+3. 当前实现约束必须如实记录（例如 cascade best 固定写入 `models/tmp.pt`）。
 4. 禁止继续在主文档中引用已移除的旧观测切换参数。
 
 ## Examples
 - 正例:
-  - 单设备 CPU 训练: `python -m solutions.Continuous_model.train_single --device single --compute-device cpu`
-  - 单设备 GPU 更新 + 多环境 rollout: `python -m solutions.Continuous_model.train_single --device single --compute-device cuda --rollout-n-envs 8`
+  - 级联 CPU 训练: `python -m solutions.Continuous_model.train_single --device cascade --compute-device cpu`
+  - 级联 GPU 更新 + 多环境 rollout: `python -m solutions.Continuous_model.train_single --device cascade --compute-device cuda --rollout-n-envs 8`
   - 并发训练: `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
 - 反例:
   - 将 concurrent 参数传给 train_single。
@@ -55,7 +55,7 @@
 
 ## Edge Cases
 - `train_concurrent.py` 的默认 `--config` 是本机绝对路径，跨机器时应显式传相对路径。
-- single 训练 best 权重会覆盖 `models/tmp.pt`，并行实验需额外备份策略。
+- cascade 训练 best 权重会覆盖 `models/tmp.pt`，并行实验需额外备份策略。
 - 推理导出当前固定写 `seq/tmp.json`，并发运行会互相覆盖。
 
 ## Related Docs
@@ -65,4 +65,5 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-21: single 训练路径下线，文档入口收敛为 cascade/concurrent；`train_single` 示例统一为 `--device cascade`。
 - 2026-03-19: 建立训练主文档，统一 single/cascade/concurrent 入口与产物说明。
