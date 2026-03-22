@@ -2,7 +2,10 @@
 单设备/级联推理序列导出工具。
 
 在 `Env_PN_Single` 上 roll out 策略，将 `sequence`、`replay_env_overrides`、`reward_report`
-等写入仓库根目录 `seq/tmp.json`。
+等写入仓库根目录 `seq/<out_name>.json`（默认文件名见 CLI `--out-name`）。
+
+`rollout_and_export(..., gantt_png_path=..., gantt_title_suffix=...)` 可在导出 JSON 后
+对本次 rollout 的 `env.net` 调用 `render_gantt` 写出 `gantt.png`（与 `pn_single.render_gantt` 行为一致）。
 """
 
 from __future__ import annotations
@@ -161,7 +164,7 @@ def _rollout_single_sequence(
     robot_capacity: int,
     device_mode: str = "single",
     exploration: str = "mode",
-) -> tuple[list[dict[str, Any]], bool, dict[str, Any], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool, dict[str, Any], dict[str, Any], Env_PN_Single]:
     device = torch.device("cpu")
     torch.manual_seed(seed)
     env = Env_PN_Single(
@@ -242,7 +245,7 @@ def _rollout_single_sequence(
     single_route_cfg = getattr(env.net, "single_route_config", None)
     if single_route_cfg is not None:
         replay_env_overrides["single_route_config"] = dict(single_route_cfg)
-    return sequence, finished, replay_env_overrides, reward_report
+    return sequence, finished, replay_env_overrides, reward_report, env
 
 
 def _rollout_single_sequence_with_retry(
@@ -252,7 +255,7 @@ def _rollout_single_sequence_with_retry(
     robot_capacity: int,
     max_retries: int = 10,
     device_mode: str = "single",
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], bool]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], bool, Env_PN_Single]:
     if max_retries < 1:
         raise ValueError("max_retries 必须 >= 1")
 
@@ -260,9 +263,10 @@ def _rollout_single_sequence_with_retry(
     last_overrides: dict[str, Any] = {}
     last_report: dict[str, Any] = {}
     last_finished = False
+    last_env: Env_PN_Single | None = None
     for attempt in range(max_retries):
         attempt_seed = seed + attempt
-        sequence, finished, replay_env_overrides, reward_report = _rollout_single_sequence(
+        sequence, finished, replay_env_overrides, reward_report, env = _rollout_single_sequence(
             model_path=model_path,
             max_steps=max_steps,
             seed=attempt_seed,
@@ -274,13 +278,15 @@ def _rollout_single_sequence_with_retry(
         last_overrides = replay_env_overrides
         last_report = reward_report
         last_finished = finished
+        last_env = env
         if finished:
             if attempt > 0:
                 print(f"[INFO] single 模式第 {attempt + 1} 次推理达到 finish。")
-            return sequence, replay_env_overrides, reward_report, finished
+            return sequence, replay_env_overrides, reward_report, finished, env
 
     print(f"[WARN] single 模式重试 {max_retries} 次后仍未 finish，导出最后一次序列。")
-    return last_sequence, last_overrides, last_report, last_finished
+    assert last_env is not None
+    return last_sequence, last_overrides, last_report, last_finished, last_env
 
 
 def rollout_and_export(
@@ -292,11 +298,13 @@ def rollout_and_export(
     device_mode: str,
     robot_capacity: int,
     single_retries: int,
+    gantt_png_path: Path | None = None,
+    gantt_title_suffix: str | None = None,
 ) -> dict[str, Path]:
     if not model_path.exists():
         raise FileNotFoundError(f"模型文件不存在: {model_path}")
     if device_mode == "single":
-        sequence, replay_env_overrides, reward_report, _finished = _rollout_single_sequence_with_retry(
+        sequence, replay_env_overrides, reward_report, _finished, env = _rollout_single_sequence_with_retry(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
@@ -312,7 +320,7 @@ def rollout_and_export(
             "replay_env_overrides": replay_env_overrides,
         }
     elif device_mode == "cascade":
-        sequence, replay_env_overrides, reward_report, _finished = _rollout_single_sequence_with_retry(
+        sequence, replay_env_overrides, reward_report, _finished, env = _rollout_single_sequence_with_retry(
             model_path=model_path,
             max_steps=max_steps,
             seed=seed,
@@ -341,10 +349,15 @@ def rollout_and_export(
         raise ValueError(f"不支持的 device_mode: {device_mode}")
 
     action_series_dir = Path(__file__).resolve().parents[2] / "seq"
-    action_series_path = action_series_dir / "tmp.json"
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(out_name).strip()) or "export"
+    action_series_path = action_series_dir / f"{safe_name}.json"
+    action_series_dir.mkdir(parents=True, exist_ok=True)
 
     with action_series_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    if gantt_png_path is not None:
+        env.net.render_gantt(str(gantt_png_path), title_suffix=gantt_title_suffix)
 
     return {"action_series_path": action_series_path}
 
@@ -355,7 +368,12 @@ def main() -> None:
     parser.add_argument("--model", type=Path, default=default_model, help="模型权重路径")
     parser.add_argument("--max-steps", type=int, default=500, help="最大推理步数")
     parser.add_argument("--seed", type=int, default=0, help="随机种子")
-    parser.add_argument("--out-name", type=str, default="concurrent_infer_seq", help="action_series 输出文件前缀")
+    parser.add_argument(
+        "--out-name",
+        type=str,
+        default="tmp",
+        help="seq 目录下 JSON 文件名（不含 .json）；默认 tmp 以兼容旧文档中的 seq/tmp.json",
+    )
     parser.add_argument(
         "--device",
         type=str,
@@ -386,7 +404,13 @@ def main() -> None:
     selected_device = args.device
     if out_name == "concurrent_infer_seq" and selected_device == "single":
         out_name = "single_infer_seq"
-    model_path = Path(__file__).resolve().parents[2] / "models" / args.model
+    root = Path(__file__).resolve().parents[2]
+    raw_model = args.model
+    cand = Path(raw_model)
+    if cand.is_file():
+        model_path = cand.resolve()
+    else:
+        model_path = (root / "models" / raw_model).resolve()
     out = rollout_and_export(
         model_path=model_path,
         max_steps=args.max_steps,

@@ -43,7 +43,7 @@
   - 顶层字段: `schema_version`, `device_mode`, `sequence`, `reward_report`, `replay_env_overrides`
   - `sequence` 单步字段: `step`, `time`, `actions`（可兼容 `action`）
   - `replay_env_overrides` 建议包含: `route_code`, `single_route_name`, `single_route_config`（可选）以保证回放构网拓扑与导出时一致
-  - 当前导出脚本默认输出: `seq/tmp.json`
+  - 导出脚本默认 `--out-name tmp`，输出 `seq/tmp.json`；其它名字为 `seq/<out_name>.json`
 
 ## Behavior Rules
 1. UI 设备模式与模型设备模式不一致时必须报错并阻止加载。

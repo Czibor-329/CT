@@ -1696,7 +1696,7 @@ class ClusterTool:
         if place_name.startswith("PM"):
             self._token_stats[token.token_id]["chambers"].setdefault(place_name, {"enter": None, "exit": None})["exit"] = self.time
 
-    def render_gantt(self, out_path: str) -> None:
+    def render_gantt(self, out_path: str, title_suffix: str | None = None) -> None:
         timelines = getattr(self, "_chamber_timeline", None)
         if not isinstance(timelines, dict) or not timelines:
             print("警告: _chamber_timeline 为空，跳过甘特图绘制")
@@ -1805,6 +1805,7 @@ class ClusterTool:
             no_arm=True,
             policy=int(policy),
             stage_module_names=stage_module_names,
+            title_suffix=title_suffix,
         )
 
         generated_path = Path(f"{base_path}RL1_job{int(n_jobs)}.png")

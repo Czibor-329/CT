@@ -33,10 +33,10 @@
 
 ## Interfaces
 - 统一入口命令（推荐）:
-  - 单设备训练: `python -m solutions.Continuous_model.train_single --device single`
+  - 级联训练: `python -m solutions.Continuous_model.train_single --device cascade`（可选 `--artifact-dir <dir>` 写入该目录产物、`training_metrics_plot.png`、有 best 时 `gantt.png`；亦可单独运行 `python -m solutions.Continuous_model.eval.plot_train_metrics`）
   - 并发训练: `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
-  - 推理导出: `python -m solutions.Continuous_model.export_inference_sequence --device single --model <model_path>`（写入仓库 `seq/tmp.json`，含 `replay_env_overrides` 等）
-  - 可视化: `python -m visualization.main --device single`
+  - 推理导出: `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`（默认 `seq/tmp.json`；`--out-name` 控制文件名）
+  - 可视化: `python -m visualization.main --device cascade`
   - Td_petri 主入口: `python -m solutions.Td_petri.tdpn`
 - 关键配置:
   - `data/petri_configs/single.json`

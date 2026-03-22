@@ -46,6 +46,7 @@ class Op:
 ### Requirement: 多阶段多机器甘特图
 
 系统 SHALL 提供 `plot_gantt_hatched_residence()` 函数绘制多阶段多机器调度甘特图。
+图窗背景与坐标区背景必须统一为纯白色，标题与坐标轴相关字号必须使用统一配置，避免同图内字号漂移。
 
 #### 函数签名
 
@@ -60,7 +61,8 @@ def plot_gantt_hatched_residence(
     with_label: bool = True,                 # 是否显示作业标签
     no_arm: bool = True,                     # 是否隐藏机械手泳道
     policy: int = None,                      # 调度策略编号
-    stage_module_names: Dict[int, List[str]] = None  # 阶段到模块名称映射
+    stage_module_names: Dict[int, List[str]] = None,  # 阶段到模块名称映射
+    title_suffix: str | None = None            # 追加到标题，例如「路径 1-4」
 )
 ```
 

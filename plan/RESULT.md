@@ -89,25 +89,89 @@
 
 ## 附录：路线速记与示意图
 
-以下为实验记录用路线字符串，便于与现象对照（非对外报告正文依赖）。
+
+
+##### **PM7/8(78s)->LLC->PM3/4(110s)[88s/1片]->LLD(75s)->PM9/10(80s)**
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot11.png" alt="training_metrics_plot11" style="zoom: 25%;" />
+
+![1-1](assets\1-1.png)
+
+
+
+##### PM7/8(99s)->PM9/10(73s)->LLC(110s)->PM2(80s)[420s/20片]->PM1(128s)->PM3(126s)->LLD(75s)->LP_done
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot12.png" alt="training_metrics_plot12" style="zoom:25%;" />
+
+![1-2](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-2.png)
+
+
+
+##### PM7/8(87s)->LLC(41s)->PM1/6(60s)->PM2/5(105s)->LLD(39s)->PM9/10(54.6s)->LP_done
+
+<img src="assets\training_metrics_plot13.png" alt="training_metrics_plot13" style="zoom:25%;" />
+
+![1-3](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-3.png)
+
+
+
+
+
+##### PM7/8(50s)->LLC(34s)->PM1/6(53s)[304s/50片]->PM2/3/5(107s)->LLD(34s)->LP_done
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot14.png" alt="training_metrics_plot14" style="zoom:25%;" />
+
+![1-4](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-4.png)
+
+
+
+##### PM7/8(50s)->LLC/LLD(37s)->PM9/10(56s)[352s/25片]->LLB
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot15.png" alt="training_metrics_plot15" style="zoom:25%;" />
+
+![1-5](assets\1-5.png)
+
+
+
+##### PM7/8(70s)->LLC(0s)->PM1/2/3/4(600s)->LLD(70s)->PM9/10(200s)
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot21.png" alt="training_metrics_plot21" style="zoom:25%;" />
+
+![2-1](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\2-1.png)
+
+
+
+
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot22.png" alt="training_metrics_plot22" style="zoom:25%;" />
+
+![2-2](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\2-2.png)
+
+
+
+
+
+<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot24.png" alt="training_metrics_plot24" style="zoom:25%;" />
+
+![2-4](assets\2-4.png)
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```
-PM7/8(78s)->LLC->PM3/4(110s)[88s/1片]->LLD(75s)->PM9/10(80s)
-
-PM7/8(99s)->PM9/10(73s)->LLC(110s)->PM2(80s)[420s/20片]->PM1(128s)->PM3(126s)->LLD(75s)->LP_done
-
-PM7/8(87s)->LLC(41s)->PM1/6(60s)[339s/50片]->PM2/5(105s)->LLD(39s)->PM9/10(54.6s)->LP_done
-
-PM7/8(50s)->LLC(34s)->PM1/6(53s)[304s/50片]->PM2/3/5(107s)->LLD(34s)->LP_done
-```
-
-- 不去 PM5。
-
-```
-PM7/8(50s)->LLC/LLD(37s)->PM9/10(56s)[352s/25片]->LLB
-
 PM7/8(101s)->LLC(65s)->PM1(41s)[420s/20片]->PM3(93s)->LLD(65s)->PM6(55s)[335s/25片]->LLD(65s)->LLB
 ```
+
+
 
 附录示意图：
 

@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 #from solutions.DFS.permit_left import _num_stages,Op
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -88,8 +88,19 @@ def plot_gantt_hatched_residence(
     with_label = True,
     no_arm = True,
     policy: int = None,
-    stage_module_names: Dict[int, List[str]] = None
+    stage_module_names: Dict[int, List[str]] = None,
+    title_suffix: Optional[str] = None,
 ):
+    if title_suffix:
+        plt.rcParams["font.sans-serif"] = [
+            "Microsoft YaHei",
+            "SimHei",
+            "Noto Sans CJK SC",
+            "PingFang SC",
+            "Arial Unicode MS",
+            "DejaVu Sans",
+        ] + list(plt.rcParams.get("font.sans-serif", []))
+        plt.rcParams["axes.unicode_minus"] = False
     S = _num_stages(proc_time)
 
     # 默认的 stage -> 模块名称映射
@@ -126,9 +137,9 @@ def plot_gantt_hatched_residence(
     fig_height = 6
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     
-    # 设置浅色背景，确保所有元素清晰可见
-    fig.patch.set_facecolor('#F8FAFC')
-    ax.set_facecolor('#FFFFFF')
+    # 统一为纯白背景
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
 
     cmap = plt.get_cmap("turbo")
     # 修复：job 可能从 0 开始，需要包含所有可能的 job 值
@@ -307,7 +318,7 @@ def plot_gantt_hatched_residence(
         
         A = [1, 2, 3, 4, 5]
         B = [1, 4, 5]
-        ax.set_title(f"{len(proc_time)}-Stage|makespan={t_max:.1f}s",
+        ax.set_title(f"{len(proc_time)}-Stage|makespan={t_max:.1f}s|{title_suffix}",
                     fontsize=17, color='#0F172A', weight='normal', pad=15)
 
         # 添加 ARM 路径的图例

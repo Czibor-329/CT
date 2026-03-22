@@ -2,6 +2,26 @@
 
 ## 2026-03-22
 
+### train_single：`--artifact-dir` 下恢复甘特与图标题路径后缀 (2026-03-22)
+- **What changed**：存在 `best.pt` 时 `rollout_and_export` 支持 `gantt_png_path` / `gantt_title_suffix`，训练后写入 `artifact_dir/gantt.png`；`plot_gantt_hatched_residence` 与 `plot_metrics` 支持标题后缀。`train_single` 用 `env.net.single_route_name` 生成 `路径 <name>` 后缀。
+- **Why**：指标图与甘特需标注路线；甘特依赖 rollout 后的网内时间线。
+- **Impact**：仅传 `gantt_png_path` 的调用方会多一次无头绘图；CLI `plot_train_metrics` 增加 `--route-label`。
+
+### train_single：训练曲线改由 `eval.plot_train_metrics.plot_metrics` (2026-03-22)
+- **What changed**：删除 `train_single.py` 内联 `_plot_training_dashboard` 及对 `matplotlib` 的依赖；`--artifact-dir` 在写入 `training_metrics.json` 后调用 `solutions.Continuous_model.eval.plot_train_metrics.plot_metrics` 生成 `training_metrics_plot.png`。`eval/plot_train_metrics.py` 提供 `plot_metrics` 与 CLI（`--input` / `--output` / `--smooth-window` / `--show`）。
+- **Why**：绘图逻辑集中到 eval，便于单独复现与调样式。
+- **Impact**：不再生成 `training_dashboard.png`；依赖该文件名的外部流程需改为 `training_metrics_plot.png` 或自行调用 CLI。文档已同步 `training-guide.md`、`pn-single.md`、`project-context.md`。
+
+### train_single：`training_metrics.json` 四指标导出 (2026-03-22)
+- **What changed**：`--artifact-dir` 下除 `training_log.json` 外，同目录写入 `training_metrics.json`，仅含键 `reward`、`makespan`、`finish`、`scrap`（与 batch 顺序对齐的列表）。
+- **Why**：下游脚本只需曲线数据时不必解析完整训练 log。
+- **Impact**：无；未传 `--artifact-dir` 时不生成该文件。文档已同步 `training-guide.md`、`pn-single.md`。
+
+### train_single：`--artifact-dir` 与训练后导出/甘特/dashboard；export 按 `out-name` 写 seq (2026-03-22)
+- **What changed**：`train_single.py` 增加 `--artifact-dir`：在该目录写入 `best.pt`/`final.pt`/`training_log.json`，训练结束后用 best 导出 `seq/<目录名>.json`、无头回放生成 `gantt.png`、并保存 `training_dashboard.png`（reward+makespan / finish+scrap / 嵌入甘特）。`export_inference_sequence.rollout_and_export` 改为写入 `seq/<out_name>.json`（`out_name` 非安全字符替换为 `_`）；CLI `--model` 若为已存在文件路径则直接使用，否则 `models/<相对路径>`。默认 `--out-name tmp` 保持 `seq/tmp.json`。
+- **Why**：单机实验需要可复现产物目录；旧版 `out_name` 未参与命名导致并发覆盖 `tmp.json`。
+- **Impact**：依赖「永远写 tmp.json」的外部脚本需显式 `--out-name tmp` 或更新路径。全程未写出 `best.pt` 时跳过序列导出与 dashboard（仍写 `final.pt` 与 `training_log.json`）。文档已同步 `training-guide.md`、`pn-single.md`、`ui-guide.md`、`project-context.md`。
+
 ### 文档：根 README 架构图、可视化模块与 Quickstart (2026-03-22)
 - **What changed**：根目录 `README.md` 在 `## Docs` 前新增 **Quickstart**（级联/并发训练、推理导出、PySide6 可视化 CLI）与 **Continuous_model 架构（概览）**（Mermaid：构网 / 设备模拟 / 训练 / 可视化；文件映射与数据流摘要）。
 - **Why**：为新人提供与 `docs/training/training-guide.md`、`docs/visualization/ui-guide.md`、`docs/overview/project-context.md` 对齐的一页入口，并与 `solutions/Continuous_model/`、`visualization/main.py` 模块边界一致。

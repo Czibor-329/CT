@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
+import re
 from collections import defaultdict, deque
 from datetime import datetime
 from time import perf_counter
@@ -16,10 +18,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
 from data.ppo_configs.training_config import PPOTrainingConfig
-from solutions.Continuous_model.env_single import Env_PN_Single, FastEnvWrapper, VectorEnv
-from solutions.PPO.network.models import MaskedPolicyHead
 from pathlib import Path
+
 import numpy as np
+
+from solutions.Continuous_model.env_single import Env_PN_Single, FastEnvWrapper, VectorEnv
+from solutions.Continuous_model.eval.plot_train_metrics import plot_metrics
+from solutions.Continuous_model.export_inference_sequence import rollout_and_export
+from solutions.PPO.network.models import MaskedPolicyHead
 
 
 class SingleActionPolicyModule(nn.Module):
@@ -406,11 +412,67 @@ def _maybe_compile_model(model: nn.Module, enabled: bool) -> nn.Module:
         return model
 
 
+def _save_training_log_json(log: defaultdict[str, list], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {k: list(v) for k, v in log.items()}
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _artifact_route_label(env: Env_PN_Single) -> str | None:
+    rn = getattr(env.net, "single_route_name", None)
+    if rn is None or str(rn).strip() == "":
+        return None
+    return f"路径 {rn}"
+
+
+def _save_training_metrics_json(log: dict[str, list] | defaultdict[str, list], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "reward": list(log.get("reward", [])),
+        "makespan": list(log.get("makespan", [])),
+        "finish": list(log.get("finish", [])),
+        "scrap": list(log.get("scrap", [])),
+    }
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _postprocess_training_artifacts(
+    log: defaultdict[str, list],
+    artifact_dir: Path,
+    device_mode: str,
+    config: PPOTrainingConfig,
+    route_label: str | None,
+) -> None:
+    artifact_dir = Path(artifact_dir).resolve()
+    best_pt = artifact_dir / "best.pt"
+    if not best_pt.is_file():
+        print("[artifact] 无 best.pt，跳过序列导出", flush=True)
+        return
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", artifact_dir.name) or "train_single_run"
+    gantt_png = artifact_dir / "gantt.png"
+    out = rollout_and_export(
+        model_path=best_pt,
+        max_steps=8000,
+        seed=int(config.seed),
+        out_name=safe,
+        force_overwrite_planb=False,
+        device_mode=str(device_mode).lower(),
+        robot_capacity=1,
+        single_retries=10,
+        gantt_png_path=gantt_png,
+        gantt_title_suffix=route_label,
+    )
+    seq_path = out["action_series_path"]
+    print(f"[artifact] seq={seq_path}", flush=True)
+    print(f"[artifact] gantt={gantt_png}", flush=True)
+
+
 def train_single(
     config: PPOTrainingConfig | None = None,
     checkpoint_path: str | None = None,
     device_mode: str = "single",
     rollout_n_envs: int = 1,
+    artifact_dir: str | Path | None = None,
 ):
     assert config is not None, "training config must be provided"
 
@@ -500,7 +562,12 @@ def train_single(
     os.makedirs(backup_dir, exist_ok=True)
 
     model_prefix = "CT_single"
-    best_model_path = Path(__file__).resolve().parents[2] / "models" / "tmp.pt"
+    artifact_path = Path(artifact_dir).resolve() if artifact_dir is not None else None
+    if artifact_path is not None:
+        artifact_path.mkdir(parents=True, exist_ok=True)
+        best_model_path = artifact_path / "best.pt"
+    else:
+        best_model_path = Path(__file__).resolve().parents[2] / "models" / "tmp.pt"
     best_reward = float("-inf")
     log = defaultdict(list)
 
@@ -706,6 +773,20 @@ def train_single(
     torch.save(policy_module.state_dict(), final_path)
     print(f"Final model: {final_path}", flush=True)
     print(f"Best model: {best_model_path}", flush=True)
+    if artifact_path is not None:
+        route_label = _artifact_route_label(env)
+        torch.save(policy_module.state_dict(), artifact_path / "final.pt")
+        _save_training_log_json(log, artifact_path / "training_log.json")
+        _save_training_metrics_json(log, artifact_path / "training_metrics.json")
+        metrics_png = artifact_path / "training_metrics_plot.png"
+        if log.get("reward"):
+            plot_metrics(
+                artifact_path / "training_metrics.json",
+                metrics_png,
+                route_label=route_label,
+            )
+            print(f"[artifact] metrics_plot={metrics_png}", flush=True)
+        _postprocess_training_artifacts(log, artifact_path, device_mode, config, route_label)
     return log, policy_backbone
 
 
@@ -721,6 +802,12 @@ if __name__ == "__main__":
     parser.add_argument("--compute-device", type=str, default=None, help="计算设备：cpu / cuda / cuda:0；未指定时：有 CUDA 则用 cuda，否则用配置文件中的 device")
     parser.add_argument("--checkpoint", type=str, default=None, help="checkpoint 路径")
     parser.add_argument("--rollout-n-envs", type=int, default=1, help="ultra collector 并行环境数")
+    parser.add_argument(
+        "--artifact-dir",
+        type=str,
+        default=None,
+        help="训练产物目录：best.pt/final.pt/training_log.json/training_metrics.json/training_metrics_plot.png/gantt.png（有 best 时）/seq 导出；不传则仍写入 models/tmp.pt 且不跑后处理",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).parents[2]
@@ -741,4 +828,5 @@ if __name__ == "__main__":
         checkpoint_path=checkpoint_path,
         device_mode=args.device,
         rollout_n_envs=args.rollout_n_envs,
+        artifact_dir=args.artifact_dir,
     )
