@@ -59,7 +59,7 @@
 15. 构网容量口径固定：`source/sink` 容量恒为 `100`，其余库所容量恒为 `1`；`m0` 恒为全 0，token 仅在构网末尾注入 source place。
 16. 级联模式 `TM2/TM3` 的目标 one-hot 映射在 `build_marks.py` 中固定硬编码为 8 维目标集合，不再按 route 动态构造。
 17. `u_*` 使能采用“指针目标单点判定”：先按 round-robin 指针选定下一目标，再仅校验该目标可接收（未清洗且未满）；若该指针目标不可接收，则该 `u_*` 直接不可使能，不再回退扫描其它候选目标。
-18. `_fire` 阶段不再执行目标重选；并行目标的放行完全由掩码阶段决定，`_fire` 仅推进指针与执行状态更新。
+18. `_fire` 阶段不再执行目标重选；并行目标的放行完全由掩码阶段决定。对 `_cascade_round_robin_pairs` 中的源（典型为 `LP` / `LLC` / `LLD` 指向多 PM 的 `u_*`），**round-robin 指针在 `t_*` 将晶圆放入对应并行腔室后推进**；在该类源上发射 `u_*` **不**推进指针，以保证 TM2/TM3 上并行 `t_*` 的 `_cascade_round_robin_next.values()` 筛选与刚选定的 `u_*` 目标一致。
 19. 级联观测中 `TM2/TM3` 的目标 one-hot 采用固定 8 维逐目标编码（不再按目标组压缩）；`LLC/LLD` 观测由 4 维扩展为 6 维，新增 `in/out` 两维方向 one-hot。当前版本将 `LLC/LLD` 的 `in/out` 方向位临时固定为全 0。
 20. `PetriEnvConfig.llc_tm3_takt_interval > 0` 时，对构网得到的 **LLC→`d_TM3`** 释放变迁（`("LLC","d_TM3")` 对应的 `u_*`）施加节拍门控：口径与 `u_LP` 的 `_takt_required_interval` 一致（**首次发射不因节拍被禁**，第二次起按 `build_fixed_takt_result(interval)` 的 `cycle_takts` 取最小间隔）；`<=0` 为默认关闭。门控同步作用于 `get_action_mask` 与 `get_next_event_delta`。
 21. `get_action_mask` 在 d_TM 分支中，当 `tok_gate` 为并行集合（`tuple/frozenset`）时，仅放行后置目标位于 `_cascade_round_robin_next.values()` 的 `t_*`；不在该集合中的目标直接屏蔽。
@@ -83,6 +83,7 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-22: 修复并行 stage 下 `u_*` 与 TM2/TM3 上 `t_*` 的 round-robin 错位：对 `_cascade_round_robin_pairs` 覆盖的源，`u_*` 发射不再推进指针，改在 `t_*` 落入该源并行 PM 腔室时推进；避免 `u_LLC_TM3` 后指针已指向下一个 PM 导致仅错误方向 `t_TM3_PM*` 使能（配置路线 `2-1` 等）。
 - 2026-03-22: `construct_single` 的配置预处理拆分到 `preprocess_config.py`，以“预处理后的腔室块”作为 `process_time_map` 唯一真源；`build_marks.py` 新增 marks 构造入口并接管 `m0/md/ptime/capacity/marks` 产出。容量口径固定为 `LP/LP_done=100`、其余 place=1，`m0` 固定全 0，token 仅注入 source place。`TM2/TM3` one-hot 改为固定硬编码集合。
 - 2026-03-22: `construct_single.build_single_device_net` 与内部 `_build_single_device_net_from_route_config` 合并为单一入口 `build_net`（签名与旧 `build_single_device_net` 一致）；外部调用须改用 `build_net`。
 - 2026-03-22: 拓扑缓存版本升为 v3；新增 `data/cache/transition_id_v3.npz`（`transition_id`：`t_*` 的 `(TMx, 目标腔室)` 索引）。`compile_route_stages` 的 hop 机械手改为 `infer_cascade_transport_by_scope`（`_TM2_SCOPE`/`_TM3_SCOPE`）；双覆盖时取 TM3。`construct_single` 装配 `active_t_names` 时查 `transition_id`。

@@ -980,7 +980,10 @@ class ClusterTool:
             if self._is_cascade:
                 transport = pst_place.name if pst_place.name in {"TM2", "TM3"} else "TM2"
                 tok.machine = 2 if transport == "TM3" else 1
-            self._advance_round_robin_after_u_fire(src)
+            # 并行 stage（LP/LLC/LLD 多 PM）：指针在 t_* 放入腔室后推进，避免 u_* 已推进导致
+            # TM2/TM3 上 t_* 的 _allow_t_by_machine_round_robin 与 u_* 选定目标错位（见 debug-15c637）。
+            if not (self._is_cascade and src in self._cascade_round_robin_pairs):
+                self._advance_round_robin_after_u_fire(src)
             if src in self._chamber_active and wafer_id in self._chamber_active[src]:
                 idx = self._chamber_active[src].pop(wafer_id)
                 e, _, wid = self._chamber_timeline[src][idx]
@@ -999,6 +1002,11 @@ class ClusterTool:
                 idx = len(self._chamber_timeline[target])
                 self._chamber_timeline[target].append((end_time, None, wafer_id))
                 self._chamber_active[target][wafer_id] = idx
+            if self._is_cascade:
+                for rr_source, rr_tgts in self._cascade_round_robin_pairs.items():
+                    if target in rr_tgts:
+                        self._advance_round_robin_after_u_fire(rr_source)
+                        break
 
         tok.route_head_idx += 1
         pst_place.append(tok)
@@ -1680,7 +1688,6 @@ class ClusterTool:
                 head = tokens[0]
                 if is_timed and proc_time > 0 and head.stay_time < proc_time:
                     continue
-                route_target = self._token_next_target(head)
                 available, target = self._is_next_stage_available(source=pname)
                 if available and target is not None:
                     transport = self._transport_for_t_target(pname, str(target))
