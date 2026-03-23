@@ -4,7 +4,7 @@ from solutions.PDR.parse_sequences import build_single_replay_payload
 
 def test_build_single_replay_payload_inserts_wait_5s_between_large_gaps() -> None:
     records = [
-        {"transition": "u_LP_TM2", "fire_time": 5},
+        {"transition": "u_LP_TM2_1", "fire_time": 5},
         {"transition": "t_TM2_PM7", "fire_time": 18},
     ]
 
@@ -20,6 +20,18 @@ def test_build_single_replay_payload_inserts_wait_5s_between_large_gaps() -> Non
         "t_TM2_PM7",
     ]
     assert [item["time"] for item in sequence] == [5, 10, 15, 18]
+
+
+def test_build_single_replay_payload_maps_split_u_names() -> None:
+    records = [
+        {"transition": "u_LP_TM2_1", "fire_time": 5},
+        {"transition": "u_LP_TM2_2", "fire_time": 12},
+    ]
+
+    payload = build_single_replay_payload(records)
+    sequence = payload["sequence"]
+    real_actions = [item["action"] for item in sequence if not str(item["action"]).startswith("WAIT")]
+    assert real_actions == ["u_LP_TM2", "u_LP_TM2"]
 
 
 def test_petri_search_records_transition_and_fire_time() -> None:

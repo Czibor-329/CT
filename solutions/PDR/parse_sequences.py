@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+
+def _normalize_transition_name(action_name: str) -> str:
+    """
+    把按分支拆分的 u 变迁归一为基础动作名。
+    例如：u_LP_TM2_1 / u_LP_TM2_2 -> u_LP_TM2
+    """
+    m = re.match(r"^(u_[^_]+_[^_]+)_\d+$", action_name)
+    if m:
+        return str(m.group(1))
+    return action_name
 
 
 def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -12,7 +24,7 @@ def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -
     prev_fire_time: int | None = None
 
     for item in full_transition_records:
-        action_name = str(item["transition"])
+        action_name = _normalize_transition_name(str(item["transition"]))
         fire_time = int(item["fire_time"])
 
         if prev_fire_time is None:
@@ -20,6 +32,7 @@ def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -
                 {
                     "step": step,
                     "time": fire_time,
+                    "action": action_name,
                     "actions": [action_name,"WAIT"],
                 }
             )
@@ -36,6 +49,7 @@ def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -
                 {
                     "step": step,
                     "time": wait_time,
+                    "action": "WAIT_5s",
                     "actions": ["WAIT_5s","WAIT"],
                 }
             )
@@ -45,6 +59,7 @@ def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -
             {
                 "step": step,
                 "time": fire_time,
+                "action": action_name,
                 "actions": [action_name,"WAIT"],
             }
         )
@@ -53,7 +68,7 @@ def build_single_replay_payload(full_transition_records: list[dict[str, Any]]) -
 
     return {
         "schema_version": 2,
-        "device_mode": "cascade",
+        "device_mode": "single",
         "sequence": sequence,
     }
 

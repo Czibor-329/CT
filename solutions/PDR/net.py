@@ -51,9 +51,25 @@ class Petri:
         self.ptime = np.ascontiguousarray(info["ptime"], dtype=np.int32)
         self.k = np.ascontiguousarray(info["capacity"], dtype=np.int32)
         self.idle_idx = dict(info["idle_idx"])
+        self.terminal_place_idx = int(self.idle_idx["end"])
         self._init_marks = [p.clone() for p in info["marks"]]
         self.marks = [p.clone() for p in self._init_marks]
         self.n_wafer = int(info.get("n_wafer", n_wafer))
+        self.pre_places_by_t: List[List[int]] = []
+        self.pst_places_by_t: List[List[int]] = []
+        self._pre_places_idx: List[np.ndarray] = []
+        self._pst_places_idx: List[np.ndarray] = []
+        self._pre_weights_by_t: List[np.ndarray] = []
+        self._pst_weights_by_t: List[np.ndarray] = []
+        for t in range(self.T):
+            pre_idx = np.nonzero(self.pre[:, t] > 0)[0].astype(np.int32)
+            pst_idx = np.nonzero(self.pst[:, t] > 0)[0].astype(np.int32)
+            self.pre_places_by_t.append(pre_idx.tolist())
+            self.pst_places_by_t.append(pst_idx.tolist())
+            self._pre_places_idx.append(pre_idx)
+            self._pst_places_idx.append(pst_idx)
+            self._pre_weights_by_t.append(self.pre[pre_idx, t] if pre_idx.size > 0 else np.empty((0,), dtype=np.int32))
+            self._pst_weights_by_t.append(self.pst[pst_idx, t] if pst_idx.size > 0 else np.empty((0,), dtype=np.int32))
 
         # search 函数服务变量
         self.makespan = 0
@@ -68,7 +84,12 @@ class Petri:
         self.full_transition_path: List[str] = []
         self.full_transition_records: List[Dict[str, int | str]] = []
 
-        self.takt_cycle = list(kwargs.get("takt_cycle", [0] + [170] * (self.n_wafer - 1)))
+        self.takt_cycle = list(kwargs.get("takt_cycle", [0] + [180] * (self.n_wafer - 1)))
+        self.train_current_m: Optional[np.ndarray] = None
+        self.train_current_marks: Optional[List[Place]] = None
+        self.train_current_clock: int = 0
+        self.train_current_lp_release_count: int = 0
+        self._train_cached_candidates: Optional[Dict[str, object]] = None
 
     def _init_marks_from_m(self, m: np.ndarray, two_mode=0) -> List[Place]:
         """
@@ -138,6 +159,95 @@ class Petri:
         self.visited = []
         self.transitions = []
         self.time_record = []
+        self.reset_train_state()
+
+    @staticmethod
+    def _clear_leaf_buffers() -> None:
+        global LEAF_NODES, LEAF_CLOCKS, LEAF_PATHS, LEAF_PATH_RECORDS, LEAF_LP_RELEASE_COUNTS
+        LEAF_NODES = []
+        LEAF_CLOCKS = []
+        LEAF_PATHS = []
+        LEAF_PATH_RECORDS = []
+        LEAF_LP_RELEASE_COUNTS = []
+
+    def get_train_observation(self) -> np.ndarray:
+        assert self.train_current_m is not None, "Call reset_train_state() before training"
+        return self.train_current_m.astype(np.float32, copy=True)
+
+    def reset_train_state(self) -> np.ndarray:
+        self.train_current_m = self.m.copy()
+        self.train_current_marks = self._clone_marks(self.marks)
+        self.train_current_clock = int(self.time)
+        self.train_current_lp_release_count = 0
+        self._train_cached_candidates = None
+        self._clear_leaf_buffers()
+        return self.get_train_observation()
+
+    def prepare_train_candidates(self, candidate_k: int = 8) -> Dict[str, object]:
+        assert candidate_k > 0, "candidate_k must be positive"
+        if self.train_current_m is None or self.train_current_marks is None:
+            self.reset_train_state()
+        assert self.train_current_m is not None and self.train_current_marks is not None
+
+        self._clear_leaf_buffers()
+        self.collect_leaves_iterative(
+            m=self.train_current_m,
+            marks=self.train_current_marks,
+            clock=int(self.train_current_clock),
+            depth=self.search_depth,
+            lp_release_count=self.train_current_lp_release_count,
+        )
+
+        if len(LEAF_NODES) == 0:
+            prepared = {
+                "has_candidate": False,
+                "candidate_k": int(candidate_k),
+                "valid_count": 0,
+                "action_mask": np.zeros(int(candidate_k), dtype=bool),
+                "candidate_deltas": [],
+                "candidate_states": [],
+            }
+            self._train_cached_candidates = prepared
+            return prepared
+
+        scored: List[Tuple[int, int]] = []
+        for idx in range(len(LEAF_NODES)):
+            delta_clock = abs(int(LEAF_CLOCKS[idx]) - int(self.train_current_clock))
+            scored.append((int(idx), int(delta_clock)))
+        scored.sort(key=lambda x: x[1])
+        selected = scored[: int(candidate_k)]
+
+        candidate_states: List[Dict[str, object]] = []
+        candidate_deltas: List[int] = []
+        for leaf_idx, delta_clock in selected:
+            leaf = LEAF_NODES[int(leaf_idx)]
+            candidate_states.append(
+                {
+                    "m": leaf["m"].copy(),
+                    "marks": self._clone_marks(leaf["marks"]),
+                    "clock": int(LEAF_CLOCKS[int(leaf_idx)]),
+                    "lp_release_count": int(LEAF_LP_RELEASE_COUNTS[int(leaf_idx)]),
+                }
+            )
+            candidate_deltas.append(int(delta_clock))
+
+        valid_count = len(candidate_states)
+        action_mask = np.zeros(int(candidate_k), dtype=bool)
+        action_mask[:valid_count] = True
+        prepared = {
+            "has_candidate": True,
+            "candidate_k": int(candidate_k),
+            "valid_count": int(valid_count),
+            "action_mask": action_mask,
+            "candidate_deltas": candidate_deltas,
+            "candidate_states": candidate_states,
+        }
+        self._train_cached_candidates = prepared
+        self._clear_leaf_buffers()
+        return prepared
+
+    def is_finished_marking(self, m: np.ndarray) -> bool:
+        return bool(int(m[self.terminal_place_idx]) == self.n_wafer)
 
     def mask_t(self, m: np.ndarray,marks: Optional[List[Place]] = None, with_clf=False) -> np.ndarray[bool]:
         """
@@ -153,13 +263,17 @@ class Petri:
         :return: the mask for enable transition set
         """
 
-        cond_pre = (self.pre <= m[:, None]).all(axis=0)
-        if self.k is not None:
-            cond_cap = ((m[:, None] + self.pst) <= self.k[:, None]).all(axis=0)
-            mask = cond_pre & cond_cap
-        else:
-            mask = cond_pre
-
+        mask = np.ones(self.T, dtype=bool)
+        for t in range(self.T):
+            pre_idx = self._pre_places_idx[t]
+            if pre_idx.size > 0 and (m[pre_idx] < self._pre_weights_by_t[t]).any():
+                mask[t] = False
+                continue
+            if self.k is None:
+                continue
+            pst_idx = self._pst_places_idx[t]
+            if pst_idx.size > 0 and (m[pst_idx] + self._pst_weights_by_t[t] > self.k[pst_idx]).any():
+                mask[t] = False
         return mask
 
     def enabled_transitions(self) -> list[int]:
@@ -182,8 +296,8 @@ class Petri:
         tau = self.time if start_from is None else int(start_from)
         d   = int(self.ttime)
 
-        pre_places = np.nonzero(self.pre[:, t] > 0)[0]
-        pst_places = np.nonzero(self.pst[:, t] > 0)[0]
+        pre_places = self._pre_places_idx[t]
+        pst_places = self._pst_places_idx[t]
 
         # 若任何前置库所无 token，直接不可触发
         for p in pre_places:
@@ -202,9 +316,10 @@ class Petri:
         # 这里采用离散时刻点检查：完成时刻后的即时可用（enter = tau + d）
         # 只要静态容量允许即可（若你有更严格的在制约束，可在此拓展）
         # 由于容量是静态上限，简单检查“现在的 m + Pst[:,t] <= k”即可：
-        if not ((m + self.pst[:, t]) <= self.k).all():
-            return -1
-        if self.id2t_name[t] == "u_LP_TM2":
+        if self.k is not None and pst_places.size > 0:
+            if (m[pst_places] + self._pst_weights_by_t[t] > self.k[pst_places]).any():
+                return -1
+        if self.id2t_name[t].startswith("u_LP_TM2"):
             earliest = max(earliest, self._lp_takt_ready_time(lp_release_count))
         return earliest
 
@@ -233,8 +348,8 @@ class Petri:
         tf = te + d - 1  # 完成时刻（含）
         enter_new = tf + 1
 
-        pre_places = np.nonzero(self.pre[:, t] > 0)[0]
-        pst_places = np.nonzero(self.pst[:, t] > 0)[0]
+        pre_places = self._pre_places_idx[t]
+        pst_places = self._pst_places_idx[t]
 
         # 1) 消费前置库所 token（队头）
         for p in pre_places:
@@ -267,7 +382,7 @@ class Petri:
         检查当前动作是否触发驻留时间违规（resident scrap）。
         返回 True 表示该分支需要剪枝。
         """
-        pre_places = np.nonzero(self.pre[:, t] > 0)[0]
+        pre_places = self._pre_places_idx[t]
         for p in pre_places:
             place = mark[p]
             if place.type == 1:
@@ -282,6 +397,58 @@ class Petri:
     def step(self,t: int):
         pass
 
+    def train_step(
+            self,
+            action_idx: int,
+            candidate_k: int = 8,
+            scrap_penalty: float = -1000.0,
+            prepared: Optional[Dict[str, object]] = None,
+    ):
+        if prepared is None:
+            prepared = self._train_cached_candidates
+            if prepared is None:
+                prepared = self.prepare_train_candidates(candidate_k=candidate_k)
+        self._train_cached_candidates = None
+
+        has_candidate = bool(prepared["has_candidate"])
+        action_mask = np.asarray(prepared["action_mask"], dtype=bool)
+        if not has_candidate:
+            obs = self.reset_train_state()
+            info = {
+                "action_mask": action_mask,
+                "scrap": True,
+                "delta_clock": 0,
+                "finish": False,
+                "candidate_count": 0,
+                "time": int(self.train_current_clock),
+            }
+            return obs, float(scrap_penalty), True, info
+
+        valid_count = int(prepared["valid_count"])
+        assert 0 <= int(action_idx) < valid_count, "action_idx must point to a valid candidate"
+        candidate_states = prepared["candidate_states"]
+        candidate_deltas = prepared["candidate_deltas"]
+        selected_state = candidate_states[int(action_idx)]
+        delta_clock = int(candidate_deltas[int(action_idx)])
+
+        self.train_current_m = selected_state["m"].copy()
+        self.train_current_marks = self._clone_marks(selected_state["marks"])
+        self.train_current_clock = int(selected_state["clock"])
+        self.train_current_lp_release_count = int(selected_state["lp_release_count"])
+
+        finish = self.is_finished_marking(self.train_current_m)
+        reward = -float(delta_clock)
+        obs = self.get_train_observation()
+        info = {
+            "action_mask": action_mask,
+            "scrap": False,
+            "delta_clock": int(delta_clock),
+            "finish": bool(finish),
+            "candidate_count": int(valid_count),
+            "time": int(self.train_current_clock),
+        }
+        return obs, reward, bool(finish), info
+
     def _search_fire(self, t: int, m, marks, start_from: int):
         """
         Fire transition for search algorithm (no PPO-specific logic).
@@ -292,7 +459,7 @@ class Petri:
 
         # Compute mask, finish, and deadlock status
         mask = self.mask_t(new_m, new_marks)
-        finish = bool((new_m == self.md).all())
+        finish = self.is_finished_marking(new_m)
         deadlock = (not finish) and (not mask.any())
 
         # Return info dict without PPO-specific fields like overtime
@@ -307,7 +474,7 @@ class Petri:
         return info
 
     def _get_t_job_id(self,t,mark: List[Place]):
-        pre_place = np.nonzero(self.pre[:, t] > 0)[0]
+        pre_place = self._pre_places_idx[t]
         for p in pre_place:
             if mark[p].type == 1 or mark[p].type == 2 or mark[p].type == 3:
                 tok = mark[p].head()
@@ -357,7 +524,7 @@ class Petri:
         while stack:
             cur_m, cur_marks, cur_clock, cur_depth, cur_path, cur_path_records, cur_lp_release_count = stack.pop()
 
-            if bool((cur_m == self.md).all()) or cur_depth == 0:
+            if self.is_finished_marking(cur_m) or cur_depth == 0:
                 self.get_leaf_node(
                     m=cur_m,
                     marks=cur_marks,
@@ -398,7 +565,7 @@ class Petri:
                 new_clock = int(info["time"])
                 new_path = cur_path + [int(t)]
                 new_path_records = cur_path_records + [{"transition": self.id2t_name[t], "fire_time": int(enable_time)}]
-                new_lp_release_count = cur_lp_release_count + (1 if self.id2t_name[t] == "u_LP_TM2" else 0)
+                new_lp_release_count = cur_lp_release_count + (1 if self.id2t_name[t].startswith("u_LP_TM2") else 0)
                 stack.append((new_m, new_marks, new_clock, cur_depth - 1, new_path, new_path_records, new_lp_release_count))
 
     def search(self):
@@ -424,7 +591,7 @@ class Petri:
                 print(f"Reached max round {max_round}, terminating search.")
                 break
             round += 1
-            if bool((current_m == self.md).all()):
+            if self.is_finished_marking(current_m):
                 self.m = current_m.copy()
                 self.marks = self._clone_marks(current_marks)
                 self.time = int(current_clock)

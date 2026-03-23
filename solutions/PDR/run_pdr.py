@@ -4,7 +4,7 @@ from solutions.PDR.parse_sequences import export_single_replay_payload
 
 def main():
     start = time.time()
-    net = Petri(n_wafer=7, ttime=5)
+    net = Petri(n_wafer=13, ttime=5)
     net.reset()
     ok = net.search()
     print(net.full_transition_path)

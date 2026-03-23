@@ -196,32 +196,38 @@ class SuperPetriBuilder:
             self.add_place(m, tokens=spec.tokens, ptime=spec.ptime, capacity=spec.capacity)
 
         # 1) 建机器人资源 place：capacity=tokens；ptime=0
-        # 连续模型优化：不再显式构造 r_TMx 资源库所，机械手通过动作通道分工与 d_TMx 运输库所建模
+        for robot_name, robot_spec in robots.items():
+            robot_tokens = int(robot_spec.tokens)
+            self.add_place(robot_name, tokens=robot_tokens, ptime=0, capacity=robot_tokens)
 
         # 3) 汇总所有路线的相邻模块边
         all_edges: Set[Tuple[str, str]] = set()
         for route in routes:
             all_edges |= self.expand_route_to_edges(route)
 
-        # 2) 创建按机械手分组的运输库所 (容量=1)
-        self.add_place("d_TM2", tokens=0, ptime=self.d_ptime, capacity=1)
-        self.add_place("d_TM3", tokens=0, ptime=self.d_ptime, capacity=1)
-
-        # 4) 为每条模块边 a->b 创建 u-d-t 子结构
+        # 2) 运输库所按 (TMx, dst) 共享，避免共享 t 时出现多前置死锁
         # 命名规则：
-        #   u_<src>_<TMx>   表示从 src 卸载到 TMx
+        #   u_<src>_<TMx>_<i>   表示从 src 卸载到 TMx（按 src+TMx 递增）
         #   t_<TMx>_<dst>   表示从 TMx 装载到 dst
+        u_idx_by_src_robot: Dict[Tuple[str, str], int] = {}
+        d_place_by_robot_dst: Dict[Tuple[str, str], str] = {}
         for a, b in sorted(all_edges):
             if a not in modules or b not in modules:
                 raise KeyError(f"Unknown module in route: {a}->{b}")
 
             robot = self.pick_robot_for_edge(a, b, robots)
-            
-            # 根据机械手选择运输库所
-            d_place = f"d_{robot}"  # d_TM2 or d_TM3
+            d_key = (robot, b)
+            if d_key not in d_place_by_robot_dst:
+                d_place = f"d_{robot}_{b}"
+                d_place_by_robot_dst[d_key] = d_place
+                self.add_place(d_place, tokens=0, ptime=self.d_ptime, capacity=1)
+            else:
+                d_place = d_place_by_robot_dst[d_key]
 
-            # 命名：u_<src>_<TMx>, t_<TMx>_<dst>
-            u = f"u_{a}_{robot}"
+            # 命名：u_<src>_<TMx>_<i>, t_<TMx>_<dst>
+            u_key = (a, robot)
+            u_idx_by_src_robot[u_key] = int(u_idx_by_src_robot.get(u_key, 0)) + 1
+            u = f"u_{a}_{robot}_{u_idx_by_src_robot[u_key]}"
             t = f"t_{robot}_{b}"
 
             # u/t 变迁：ttime=2（统一）
@@ -229,11 +235,14 @@ class SuperPetriBuilder:
             self.add_transition(t, ttime=self.default_ttime)
 
             # 基本弧：
-            # A -> u -> d_robot -> t -> B
+            # A -> u -> d -> t -> B
             self.add_arc(a, u, edge_weight)
             self.add_arc(u, d_place, edge_weight)
             self.add_arc(d_place, t, edge_weight)
             self.add_arc(t, b, edge_weight)
+            # 资源占用：u 占用 TMx，t 释放 TMx
+            self.add_arc(robot, u, edge_weight)
+            self.add_arc(t, robot, edge_weight)
 
         return self.finalize()
 
