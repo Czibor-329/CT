@@ -223,9 +223,8 @@ def load_concurrent_model(model_path: str, adapter: PetriSingleAdapter):
     from torchrl.modules import MaskedCategorical
     from torchrl.envs.utils import ExplorationType, set_exploration_type
     from solutions.PPO.network.models import DualHeadPolicyNet
-    from solutions.Continuous_model.train_concurrent import DualActionPolicyModule
-    from solutions.Continuous_model.pn import TM2_TRANSITIONS, TM3_TRANSITIONS
-    
+    from solutions.Continuous_model.deprecated.train_concurrent import DualActionPolicyModule
+
     try:
         n_obs = adapter.env.observation_spec["observation"].shape[0]
         

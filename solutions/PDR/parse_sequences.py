@@ -78,9 +78,10 @@ def export_single_replay_payload(
     out_name: str = "pdr_sequence",
 ) -> Path:
     payload = build_single_replay_payload(full_transition_records)
-    seq_dir = Path(__file__).resolve().parents[1] / "seq"
+    seq_dir = Path(__file__).resolve().parents[2] / "seq"
     seq_dir.mkdir(parents=True, exist_ok=True)
-    out_path = seq_dir / f"{out_name}.json"
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(out_name).strip()) or "pdr_sequence"
+    out_path = seq_dir / f"{safe_name}.json"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return out_path

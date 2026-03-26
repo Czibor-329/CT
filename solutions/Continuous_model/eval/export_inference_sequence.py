@@ -22,8 +22,8 @@ from tensordict.nn import TensorDictModule
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import MaskedCategorical, ProbabilisticActor
 
-from solutions.PPO.network.models import MaskedPolicyHead
-from solutions.Continuous_model.env_single import Env_PN_Single
+from solutions.model.network import MaskedPolicyHead
+from solutions.Continuous_model.rl_env import Env_PN_Single
 
 
 def _to_step_state(td_next: Any) -> Any:

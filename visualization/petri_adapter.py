@@ -145,7 +145,7 @@ class PetriAdapter(AlgorithmAdapter):
         Returns:
             (tm2_actions, tm3_actions): 两个 ActionInfo 列表
         """
-        from solutions.Continuous_model.pn import TM2_TRANSITIONS, TM3_TRANSITIONS
+        from solutions.Continuous_model.deprecated.pn import TM2_TRANSITIONS, TM3_TRANSITIONS
         
         tm2_enabled, tm3_enabled = self.net.get_enable_t()
         tm2_enabled_set = set(tm2_enabled)

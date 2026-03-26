@@ -5,9 +5,9 @@ import pstats
 import time
 import random
 
-import src.core as core_module
-from src.core import ClusterTool, _clear_leaf_buffers
-from src.parse_sequences import export_single_replay_payload
+from . import core as core_module
+from .core import ClusterTool, _clear_leaf_buffers
+from .parse_sequences import export_single_replay_payload
 
 
 def select_node(queue, current_clock: int, mode=0):

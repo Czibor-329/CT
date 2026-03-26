@@ -4,13 +4,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from solutions.Continuous_model.construct import BasedToken
-from solutions.Continuous_model.pn import LL, PM, Place, SR, TM
+from solutions.Continuous_model.deprecated.pn import LL, PM, Place, SR, TM
 from solutions.Continuous_model.construct.preprocess_config import ChamberRuntimeBlock
 
 SOURCE = 3
@@ -44,6 +43,34 @@ CASCADE_TM3_TARGET_ONEHOT: Dict[str, int] = {
     name: idx for idx, name in enumerate(CASCADE_TM3_TARGET_ORDER)
 }
 
+@dataclass(slots=True)
+class BasedToken:
+    enter_time: int
+    stay_time: int = 0
+    token_id: int = -1
+    machine: int = -1
+    route_type: int = 0
+    step: int = 0
+    where: int = 0
+    route_queue: Tuple[Any, ...] = ()
+    route_head_idx: int = 0
+    _target_place: Optional[str] = None
+    _dst_level_targets: Optional[Tuple[str, ...]] = None
+    _dst_level_full_on_pick: bool = False
+    _place_idx: int = -1
+
+    def clone(self):
+        return BasedToken(
+            enter_time=self.enter_time,
+            stay_time=self.stay_time,
+            token_id=self.token_id,
+            machine=self.machine,
+            route_type=self.route_type,
+            step=self.step,
+            where=self.where,
+            route_queue=tuple(self.route_queue),
+            route_head_idx=int(self.route_head_idx),
+        )
 
 @dataclass
 class BuildMarksResult:

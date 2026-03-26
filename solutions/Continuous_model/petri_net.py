@@ -5,7 +5,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from pathlib import Path
-from solutions.Continuous_model.helper_function import _normalize_wait_durations
+from solutions.Continuous_model.utils import _normalize_wait_durations
 
 import numpy as np
 try:
@@ -16,10 +16,10 @@ except Exception:  # pragma: no cover - numba 可选依赖
 
 from data.petri_configs.env_config import PetriEnvConfig
 from solutions.Continuous_model.construct import BasedToken
-from solutions.Continuous_model.construct_single import build_net
+from solutions.Continuous_model.model_builder import build_net
 from solutions.Continuous_model.construct.route_compiler_single import normalize_route_spec
-from solutions.Continuous_model.pn import Place
-from solutions.Continuous_model.takt_cycle_analyzer import (
+from solutions.Continuous_model.deprecated.pn import Place
+from solutions.Continuous_model.takt_analysis import (
     analyze_cycle,
     build_fixed_takt_result,
 )

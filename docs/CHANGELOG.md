@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-03-26
+
+### construct 迁移兼容：deprecated 承接 legacy 构网类 (2026-03-26)
+- **What changed**：新增 `solutions/Continuous_model/deprecated/construct.py`，承接 `BasedToken`、`SuperPetriBuilder`、`ModuleSpec`、`RobotSpec`、`SharedGroup`、`Stage`、`INF`；`solutions/Continuous_model/construct/__init__.py` 从动态加载 `construct.py` 改为显式从 `deprecated.construct` 转发同名导出。
+- **Why**：`solutions/Continuous_model/construct.py` 已迁移/移除后，原 `importlib` 按路径加载会直接失败，导致 `from solutions.Continuous_model.construct import ...` 断裂。
+- **Impact**：保留历史导入路径兼容；主路径与 deprecated 并发路径可继续通过 `construct` 包入口获取 `BasedToken` 与 legacy 构网类。
+
 ## 2026-03-23
 
 ### PDR：记录发射时刻并导出 5s 粒度回放序列 (2026-03-23)

@@ -18,6 +18,10 @@
 - `docs/td_petri_modeling.md` -> `docs/td-petri/td-petri-guide.md`
 - `docs/env_place_obs.md` -> 历史说明保留，参考 `docs/continuous-model/pn-single.md`
 
+## Code Migration Map
+- `solutions/Continuous_model/construct.py` -> `solutions/Continuous_model/deprecated/construct.py`
+- `solutions/Continuous_model/construct/__init__.py` 仅保留兼容转发，不再动态加载同级 `construct.py`
+
 ## Retention Policy
 1. 兼容页必须包含“新路径 + 迁移日期 + 差异说明”。
 2. 新增规范不得写入兼容页。
@@ -33,3 +37,4 @@
 
 ## Change Notes
 - 2026-03-19: 新增 deprecated 索引，统一旧文档迁移映射与保留策略。
+- 2026-03-26: 新增代码迁移映射：`construct.py` 迁移到 `deprecated/construct.py`，`construct` 包入口改为兼容转发。

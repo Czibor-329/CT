@@ -2,7 +2,7 @@
 
 ## Abstract
 - What: 定义 `solutions/PDR` 当前默认构网路线与深度优先搜索行为。
-- When: 修改 `solutions/PDR/construct.py` 或 `solutions/PDR/net.py` 前必须先读。
+- When: 修改 `solutions/PDR/construct.py`、`solutions/PDR/core.py`、`solutions/PDR/train.py` 或配套导出/绘图脚本前必须先读。
 - Not: 不包含 obs 构造与 RL 选点逻辑。
 - Key rules:
   - 默认路线固定为 `LP -> PM7/PM8 -> LLC -> PM1/PM2 -> LLD -> LP_done`。
@@ -61,7 +61,7 @@
   - `pre_places_by_t[t]`：变迁 `t` 的前置库所索引列表
   - `pst_places_by_t[t]`：变迁 `t` 的后置库所索引列表
   - `mask_t/_earliest_enable_time/_tpn_fire/check_scrap` 复用缓存，不重复扫描 `pre/pst` 矩阵
-11. 训练态 PPO 叶子选择规则（仅 `train_pdr.py`）：
+11. 训练态 PPO 叶子选择规则（仅 `train.py`）：
   - 每个训练 step 必须调用 `collect_leaves_iterative` 生成候选叶子。
   - 候选叶子数量大于 `k`（默认 `k=8`）时，只保留 `abs(leaf_clock-current_clock)` 最小的前 `k` 个。
   - 候选叶子数量不足 `k` 时，`action_mask` 仅前 `valid_count` 位为 `True`，其余位为 `False`。
@@ -73,25 +73,29 @@
 
 ## Configuration / API
 - `solutions/PDR/construct.py`
-  - `build_default_pdr_info(n_wafer=7, d_ptime=3, default_ttime=2)`
-- `solutions/PDR/net.py`
+  - `build_pdr_net(n_wafer=7) -> dict`
+- `solutions/PDR/core.py`
   - `check_scrap(t, firetime, marks) -> bool`
   - `_lp_takt_ready_time(lp_release_count) -> int`
   - `get_leaf_node(m, marks, clock, path, path_records, lp_release_count) -> None`
   - `collect_leaves_iterative(m, marks, clock, depth, lp_release_count) -> None`
   - `prepare_train_candidates(candidate_k=8) -> dict`
-  - `train_step(action_idx, candidate_k=8, scrap_penalty=-1000.0, prepared=None) -> (obs, reward, done, info)`
+  - `step(action_idx=None, mode="train") -> (obs, reward, done, next_mask, info)`
   - `search() -> bool`
-- `solutions/PDR/train_pdr.py`
-  - `python -m solutions.PDR.train_pdr`：PPO 训练入口（输入 `self.m`，输出 `k` 维离散候选索引策略）
+- `solutions/PDR/train.py`
+  - `python -m solutions.PDR.train`：PPO 训练入口
+  - 默认训练指标输出：`results/training_metrics.json`
 - `solutions/PDR/parse_sequences.py`
   - `build_single_replay_payload(full_transition_records) -> dict`
-  - `export_single_replay_payload(full_transition_records, out_name) -> Path`
+  - `export_single_replay_payload(full_transition_records, out_name) -> Path`，输出 `seq/<out_name>.json`
+- `solutions/PDR/plot_train_metrics.py`
+  - `python -m solutions.PDR.plot_train_metrics --input <training_metrics.json> --output <out.png>`
+  - `python -m solutions.PDR.plot_train_metrics --compare-inputs <a.json> <b.json> --output <out.png>`
 - `solutions/PDR/run_pdr.py`
   - `main()` 在 `search()` 完成后自动导出 `seq/pdr_sequence.json`
 
 ## Examples
-- 正例：调用 `build_default_pdr_info()` 后检查存在 `TM2/TM3` 资源库所与 `d_TM2_LLC`、`d_TM3_LLD` 这类运输库所，且 `id2t_name` 含 `u_PM7_TM2_1` 与 `t_TM3_PM1`。
+- 正例：调用 `build_pdr_net()` 后检查存在 `TM2/TM3` 资源库所与 `d_TM2_LLC`、`d_TM3_LLD` 这类运输库所，且 `id2t_name` 含 `u_PM7_TM2_1` 与 `t_TM3_PM1`。
 - 反例：让同一个 `t_TMx_B` 同时依赖多个 `d` 前置库所。
 
 ## Edge Cases / Gotchas
@@ -102,3 +106,6 @@
 - `docs/README.md`
 - `docs/td-petri/td-petri-guide.md`
 - `docs/routes.md`
+
+## Change Notes
+- 2026-03-26: 修复 `solutions.PDR` 模块内引用为包内导入；`parse_sequences.py` 导出目录统一到仓库根 `seq/` 并收口文件名；`train.py` 默认训练指标输出改为 `results/training_metrics.json`；`plot_train_metrics.py` 单文件/对比模式统一使用 `--output` 输出 PNG。

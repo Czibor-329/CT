@@ -2,7 +2,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union, Set
 
-from src.pn_models import FlatMarks
+from .pn_models import FlatMarks
 
 # 支持路线中分叉：Stage = "PM7" 或 ["PM7","PM8"]
 Stage = Union[str, List[str]]

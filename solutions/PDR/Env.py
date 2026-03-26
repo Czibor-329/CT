@@ -2,9 +2,10 @@ import numpy as np
 from tensordict import TensorDict
 from torchrl.data import Binary, Categorical, Composite, Unbounded
 from torchrl.envs import EnvBase
-from config.clustertool_config import ClusterToolCfg
-from src.core import ClusterTool
 import torch
+
+from .clustertool_config import ClusterToolCfg
+from .core import ClusterTool
 
 
 class Env(EnvBase):

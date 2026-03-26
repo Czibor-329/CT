@@ -5,6 +5,7 @@ import json
 from math import ceil
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict
 
 
@@ -25,10 +26,10 @@ from torchrl.modules import MaskedCategorical, ProbabilisticActor, ValueOperator
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value import GAE
 
-from config.clustertool_config import ClusterToolCfg
-from config.training_config import TrainingConfig
-from src.Env import Env
-from src.ppo_models import MaskedPolicyHead
+from .clustertool_config import ClusterToolCfg
+from .training_config import TrainingConfig
+from .Env import Env
+from .ppo_models import MaskedPolicyHead
 
 
 def build_policy_actor(
@@ -108,6 +109,10 @@ def collect_rollout(
     if rollout_td.numel() > frames_per_batch:
         rollout_td = rollout_td[:frames_per_batch]
     return rollout_td
+
+
+def _training_metrics_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "results" / "training_metrics.json"
 
 
 def train(
@@ -247,7 +252,8 @@ def train(
     env.close()
     torch.save(policy.state_dict(), os.path.join(backup_dir, "CT_pdr_final.pt"))
     torch.save(policy.state_dict(), latest_model_path)
-    metrics_path = os.path.join("D:\Code\search_tree\Search_Tree\logs\depth5_candidate", "training_metrics.json")
+    metrics_path = _training_metrics_path()
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_payload = {
         "reward": list(log["reward"]),
         "finish": list(log["finish"]),
@@ -261,7 +267,7 @@ def train(
             "timestamp": timestamp,
         },
     }
-    with open(metrics_path, "w", encoding="utf-8") as f:
+    with metrics_path.open("w", encoding="utf-8") as f:
         json.dump(metrics_payload, f, ensure_ascii=False, indent=2)
     print(f"Training done. Best reward: {best_reward:.2f}", flush=True)
     print(f"Best model: {best_model_path}", flush=True)

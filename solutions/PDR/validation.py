@@ -8,11 +8,11 @@ import torch
 from tensordict import TensorDict
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
-from config.clustertool_config import ClusterToolCfg
-from config.training_config import TrainingConfig
-from src.Env import Env
-from src.parse_sequences import export_single_replay_payload
-from src.train import build_policy_actor
+from .clustertool_config import ClusterToolCfg
+from .training_config import TrainingConfig
+from .Env import Env
+from .parse_sequences import export_single_replay_payload
+from .train import build_policy_actor
 
 
 EVAL_RUNS = 5

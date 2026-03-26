@@ -22,10 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
-from solutions.Continuous_model.env_single import Env_PN_Single, FastEnvWrapper, VectorEnv
+from solutions.Continuous_model.rl_env import Env_PN_Single, FastEnvWrapper, VectorEnv
 from solutions.Continuous_model.eval.plot_train_metrics import plot_metrics
-from solutions.Continuous_model.export_inference_sequence import rollout_and_export
-from solutions.PPO.network.models import MaskedPolicyHead
+from solutions.Continuous_model.eval.export_inference_sequence import rollout_and_export
+from solutions.model.network import MaskedPolicyHead
 
 
 class SingleActionPolicyModule(nn.Module):

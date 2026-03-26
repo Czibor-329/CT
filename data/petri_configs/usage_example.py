@@ -5,7 +5,7 @@ Petri网环境配置使用示例
 """
 
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.pn import Petri
+from solutions.Continuous_model.deprecated.pn import Petri
 
 
 def example_1_default_config():

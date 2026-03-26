@@ -16,7 +16,7 @@ from torchrl.data import Binary, Categorical, Composite, Unbounded
 from torchrl.envs import EnvBase
 
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.pn_single import ClusterTool
+from solutions.Continuous_model.petri_net import ClusterTool
 from pathlib import Path
 
 _TRUE_T = torch.tensor(True)

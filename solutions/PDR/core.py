@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from config.clustertool_config import ClusterToolCfg
-from src.construct import build_pdr_net
-from src.pn_models import FlatMarks
+from .clustertool_config import ClusterToolCfg
+from .construct import build_pdr_net
+from .pn_models import FlatMarks
 
 INF = 10**6
 LEAF_NODES = []

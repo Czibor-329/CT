@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Set, Tuple
 
-from solutions.Continuous_model.helper_function import _preprocess_process_time_map as _hf_preprocess_process_time_map
+from solutions.Continuous_model.utils import _preprocess_process_time_map as _hf_preprocess_process_time_map
 from solutions.Continuous_model.construct.route_compiler_single import RouteIR
 
 FIXED_TIMELINE_CHAMBERS: Tuple[str, ...] = tuple(

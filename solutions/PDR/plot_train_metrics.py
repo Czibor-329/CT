@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from collections import Counter
 from typing import Sequence
-from matplotlib.ticker import MaxNLocator
+
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 
 # 标题中的「路径」等汉字需无衬线中文字体，否则为方框（Windows 常见：微软雅黑 / 黑体）
 _CJK_SANS = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
@@ -36,6 +36,7 @@ def _moving_average(arr: np.ndarray, window: int) -> np.ndarray:
 
 def plot_metrics(
     metrics_json: Path,
+    out_png: Path,
     *,
     smooth_window: int = 5,
     show: bool = False,
@@ -108,9 +109,9 @@ def plot_metrics(
     ax2.grid(True, axis="y", alpha=0.3)
 
     plt.tight_layout()
-    #out_png = Path(out_png)
-    #out_png.parent.mkdir(parents=True, exist_ok=True)
-    #fig.savefig(str(out_png), dpi=300, bbox_inches="tight")
+    out_png = _normalize_png_output(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(out_png), dpi=300, bbox_inches="tight")
     if show:
         plt.show()
     plt.close(fig)
@@ -121,14 +122,26 @@ def _load_metrics_payload(metrics_json: Path) -> dict:
     return json.loads(metrics_json.read_text(encoding="utf-8"))
 
 
-def plot_makespan_comparison(file_paths, labels, window=9,
-                             save_path="makespan_neurips", titles="x"):
+def _normalize_png_output(out_png: Path) -> Path:
+    out_png = Path(out_png)
+    if out_png.suffix == "":
+        return out_png.with_suffix(".png")
+    return out_png
+
+
+def plot_makespan_comparison(
+    file_paths: Sequence[Path],
+    out_png: Path,
+    *,
+    window: int = 9,
+    titles: str = "Makespan Comparison",
+    show: bool = False,
+) -> None:
     """
     参数：
     - file_paths: list[str]，json文件路径列表
-    - labels: list[str]，对应标签
     - window: 平滑窗口大小
-    - save_path: 输出文件名前缀
+    - out_png: 输出 PNG 路径
     - titles: 图标题
     """
 
@@ -179,7 +192,8 @@ def plot_makespan_comparison(file_paths, labels, window=9,
 
     plotted_count = 0
 
-    for idx, (path, label) in enumerate(zip(file_paths, labels)):
+    for idx, path in enumerate(file_paths):
+        label = Path(path).stem
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -232,9 +246,12 @@ def plot_makespan_comparison(file_paths, labels, window=9,
     leg.get_frame().set_alpha(0.95)
 
     fig.tight_layout()
-    fig.savefig(f"{save_path}.png", dpi=400, bbox_inches="tight")
-    fig.savefig(f"{save_path}.pdf", bbox_inches="tight")
-    plt.show()
+    out_png = _normalize_png_output(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(out_png), dpi=400, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
 
 
 def main() -> None:
@@ -255,10 +272,20 @@ def main() -> None:
     )
     args = p.parse_args()
     if args.compare_inputs:
-        plot_makespan_comparison(args.compare_inputs, args.output)
+        plot_makespan_comparison(
+            args.compare_inputs,
+            args.output,
+            show=args.show,
+        )
         return
 
-    plot_metrics(args.input, args.output, smooth_window=args.smooth_window, show=args.show, route_label=args.route_label)
+    plot_metrics(
+        args.input,
+        args.output,
+        smooth_window=args.smooth_window,
+        show=args.show,
+        route_label=args.route_label,
+    )
 
 
 if __name__ == "__main__":
