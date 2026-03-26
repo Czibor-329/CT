@@ -15,7 +15,7 @@ from tensordict import TensorDict
 
 from torchrl.modules import MaskedCategorical
 
-from solutions.Continuous_model.deprecated.env import Env_PN_Concurrent
+from solutions.A.deprecated.env import Env_PN_Concurrent
 from solutions.model.network import DualHeadPolicyNet
 from data.ppo_configs.training_config import PPOTrainingConfig
 

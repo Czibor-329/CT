@@ -68,13 +68,13 @@ for p in pst_places:
 以下代码展示如何使用 `SuperPetriBuilder` 构建一个包含 LP、PM1、PM2 和 LP_done 的 Petri 网：
 
 ```python
-from solutions.Continuous_model.construct import SuperPetriBuilder, ModuleSpec, RobotSpec
+from solutions.A.construct import SuperPetriBuilder, ModuleSpec, RobotSpec
 
 modules = {
-    "LP": ModuleSpec(tokens=12, ptime=0, capacity=12),      # 初始 12 个晶圆
+    "LP": ModuleSpec(tokens=12, ptime=0, capacity=12),  # 初始 12 个晶圆
     "LP_done": ModuleSpec(tokens=0, ptime=0, capacity=12),  # 完成位置
-    "PM1": ModuleSpec(tokens=0, ptime=30, capacity=2),      # PM1 容量=2，处理时间=30s
-    "PM2": ModuleSpec(tokens=0, ptime=80, capacity=1),      # PM2 容量=1，处理时间=80s
+    "PM1": ModuleSpec(tokens=0, ptime=30, capacity=2),  # PM1 容量=2，处理时间=30s
+    "PM2": ModuleSpec(tokens=0, ptime=80, capacity=1),  # PM2 容量=1，处理时间=80s
 }
 
 robots = {

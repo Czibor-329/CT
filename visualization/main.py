@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from solutions.Continuous_model.env_single import Env_PN_Single
+from solutions.A.env_single import Env_PN_Single
 
 from .petri_single_adapter import PetriSingleAdapter
 from .viewmodel import PetriViewModel
@@ -223,7 +223,7 @@ def load_concurrent_model(model_path: str, adapter: PetriSingleAdapter):
     from torchrl.modules import MaskedCategorical
     from torchrl.envs.utils import ExplorationType, set_exploration_type
     from solutions.PPO.network.models import DualHeadPolicyNet
-    from solutions.Continuous_model.deprecated.train_concurrent import DualActionPolicyModule
+    from solutions.A.deprecated.train_concurrent import DualActionPolicyModule
 
     try:
         n_obs = adapter.env.observation_spec["observation"].shape[0]

@@ -76,7 +76,7 @@ data/petri_configs/
 ### 方法1: 使用默认配置
 
 ```python
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 使用默认配置
 net = Petri()
@@ -86,7 +86,7 @@ net = Petri()
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 创建配置
 config = PetriEnvConfig(
@@ -102,7 +102,7 @@ net = Petri(config=config)
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 加载配置文件
 config = PetriEnvConfig.load("data/petri_configs/s_train.json")
@@ -114,7 +114,7 @@ net = Petri(config=config)
 ### 方法4: 向后兼容（旧代码仍可运行）
 
 ```python
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 旧方式仍然有效
 net = Petri(stop_on_scrap=True)
@@ -149,7 +149,7 @@ print(config)
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 加载配置
 config = PetriEnvConfig.load("data/petri_configs/s_train.json")
@@ -165,7 +165,7 @@ print(f"Transport Penalty: {net.reward_config['transport_penalty']}")
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 # 创建自定义奖励配置
 custom_reward_config = {
@@ -208,7 +208,7 @@ net = Petri(config=config)
 
 ```python
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Td_petri.enviroment import Env_PN
+from solutions.C.enviroment import Env_PN
 
 # 创建环境配置
 petri_config = PetriEnvConfig.load("data/petri_configs/s_train.json")

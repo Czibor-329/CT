@@ -7,8 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Set, Tuple
 
-from solutions.Continuous_model.utils import _preprocess_process_time_map as _hf_preprocess_process_time_map
-from solutions.Continuous_model.construct.route_compiler_single import RouteIR
+from solutions.A.utils import _preprocess_process_time_map as _hf_preprocess_process_time_map
+from solutions.A.construct.route_compiler_single import RouteIR
 
 FIXED_TIMELINE_CHAMBERS: Tuple[str, ...] = tuple(
     [*(f"PM{i}" for i in range(1, 11)), "LLC", "LLD"]

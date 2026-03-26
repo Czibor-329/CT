@@ -9,7 +9,7 @@ from solutions.v2.utils import (Interval,_insert_interval_sorted,Message,QueueIt
 # from solutions.v2.utils import _first_free_time_at
 #from solutions.v2.net_v2 import ActionInfo
 from visualization.plot import plot_gantt_hatched_residence,Op
-from solutions.Td_petri.construct import SuperPetriBuilderV3,ModuleSpec
+from solutions.C.construct import SuperPetriBuilderV3,ModuleSpec
 from dataclasses import dataclass
 
 INF_OCC = 10**18

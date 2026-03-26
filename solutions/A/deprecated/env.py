@@ -15,7 +15,7 @@ from torchrl.data import Binary, Categorical, Composite, Unbounded
 from torchrl.envs import EnvBase
 
 from data.petri_configs.env_config import PetriEnvConfig
-from solutions.Continuous_model.deprecated.pn import Petri
+from solutions.A.deprecated.pn import Petri
 
 
 class Env_PN_Concurrent(EnvBase):

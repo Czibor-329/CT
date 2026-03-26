@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
 
-from solutions.Td_petri.enviroment import CT_v2
+from solutions.C.enviroment import CT_v2
 from solutions.PPO.network.models import MaskedPolicyHead
 from tensordict.nn import TensorDictModule
 from torchrl.modules import ProbabilisticActor, MaskedCategorical
@@ -113,7 +113,7 @@ def main():
         
     print(f"Generated {output_file} with {len(sequence)} steps.")
 
-    out_path = r"C:\Users\khand\OneDrive\code\dqn\CT\solutions\Td_petri\\"
+    out_path = r"/solutions/C\\"
     env.net.render_gantt(out_path=out_path,policy=3)
 
 if __name__ == "__main__":

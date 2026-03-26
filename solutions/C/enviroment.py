@@ -2,7 +2,7 @@ from torchrl.data import Bounded, Unbounded, Categorical, Composite,Binary
 from torchrl.envs import EnvBase
 import torch
 from tensordict import TensorDict
-from solutions.Td_petri.tdpn import TimedPetri
+from solutions.C.tdpn import TimedPetri
 
 class CT_v2(EnvBase):
     metadata = {'render.modes': ['human', 'rgb_array'], "reder_fps": 30}

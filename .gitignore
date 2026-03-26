@@ -56,7 +56,7 @@ Thumbs.db
 *.json
 *.png
 *.pt
-solutions/Td_petri/RL2_job8.png
-solutions/Td_petri/planB_sequence.json
+solutions/C/RL2_job8.png
+solutions/C/planB_sequence.json
 *.pt
 *.npz

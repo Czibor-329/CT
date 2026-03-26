@@ -1,6 +1,6 @@
 """构网兼容导出入口（转发 deprecated/construct.py）。"""
 
-from solutions.Continuous_model.deprecated.construct import (
+from solutions.A.deprecated.construct import (
     BasedToken,
     INF,
     ModuleSpec,

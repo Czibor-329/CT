@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple, Any
 
 from data.config.params_N8 import params_N8
-from solutions.PDR.net import Petri
+from solutions.B.net import Petri
 
 from .algorithm_interface import AlgorithmAdapter, ActionInfo, StateInfo
 

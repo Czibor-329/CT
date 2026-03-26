@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from solutions.Continuous_model.deprecated.pn import LL, PM, Place, SR, TM
-from solutions.Continuous_model.construct.preprocess_config import ChamberRuntimeBlock
+from solutions.A.deprecated.pn import LL, PM, Place, SR, TM
+from solutions.A.construct.preprocess_config import ChamberRuntimeBlock
 
 SOURCE = 3
 ROBOT = 2

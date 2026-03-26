@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from solutions.Continuous_model.construct.build_topology import infer_cascade_transport_by_scope
+from solutions.A.construct.build_topology import infer_cascade_transport_by_scope
 
 
 @dataclass(frozen=True, slots=True)

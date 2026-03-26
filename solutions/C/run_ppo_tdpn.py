@@ -1,7 +1,7 @@
 import argparse
 import torch
-from solutions.Td_petri.enviroment import CT_v2
-from solutions.Td_petri.train import train
+from solutions.C.enviroment import CT_v2
+from solutions.C.train import train
 from torchrl.envs import Compose, DTypeCastTransform, TransformedEnv, ActionMask
 import time
 from data.ppo_configs.training_config import PPOTrainingConfig
