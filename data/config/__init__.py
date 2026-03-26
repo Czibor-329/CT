@@ -1,2 +1,0 @@
-# config package initializer
-
