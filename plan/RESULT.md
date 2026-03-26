@@ -1,4 +1,4 @@
-# 阶段性成果报告（截至 2026-03）
+# RL
 
 
 
@@ -47,22 +47,21 @@
 ---
 
 **表 2（加工路线 1-x）**  
-说明：`LP TAKt` / `LLC TAKt` 为节拍相关参数；`Makespan(13片/秒)` 为表中记录的完工跨度指标；`Batch` 为批设置；`Training time` 为单次训练耗时。
+说明：`Makespan(13片/秒)` 为表中记录的完工跨度指标；`Batch` 为批设置；`Training time` 为单次训练耗时。
 
-| LP TAKt | LLC TAKt | Route | Makespan(13片/秒) | Batch | Training time (s) |
-| :-----: | :------: | :---: | :---------------: | :---: | :---------------: |
-| 115 | — | 1-1 | 1865 | 80 | 42.1 |
-| 170 | 150 | 1-2 | 2959 | 80 | 42.1 |
-| 80 | 70 | 1-3 | 1493 | 120 | 53.1 |
-| 75 | 45 | 1-4 | 1705 | 80 | 40.3 |
-| 75 | — | 1-5 | 1577 | 80 | 33.8 |
-| 135 | 100 | 1-6 | — | — | — |
+| Route | Makespan(13片/秒) | Batch | Training time (s) |
+| :---: | :---------------: | :---: | :---------------: |
+| 1-1 | 1865 | 80 | 42.1 |
+| 1-2 | 2959 | 80 | 42.1 |
+| 1-3 | 1493 | 120 | 53.1 |
+| 1-4 | 1705 | 80 | 40.3 |
+| 1-5 | 1577 | 80 | 33.8 |
+| 1-6 | — | — | — |
 
 表 2 备注：
 
 - **1-6**：路线已规划，Makespan / Batch / 训练时间等指标**待补**。  
-- **1-*** 类路线结构更复杂，单次训练多在约 **40～60 s** 区间（与上表及组内经验一致），后续以训练加速与结构优化为重点。
-- 得补一个40s的运输时间
+- **1-*** 类路线结构更复杂，单次训练多在约 **40～60 s** 区间，后续以训练加速与结构优化为重点。
 
 ---
 
@@ -89,15 +88,15 @@
 
 ## 附录：路线速记与示意图
 
-
+![示意图](assets/image-20260319160731282.png)
 
 ##### **PM7/8(78s)->LLC->PM3/4(110s)[88s/1片]->LLD(75s)->PM9/10(80s)**
 
-<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot11.png" alt="training_metrics_plot11" style="zoom: 25%;" />
+![1-1](assets\1-1-1774451173907-1.png)
 
-![1-1](assets\1-1.png)
+![1-1-30](assets\1-1-30.png)
 
-
+------
 
 ##### PM7/8(99s)->PM9/10(73s)->LLC(110s)->PM2(80s)[420s/20片]->PM1(128s)->PM3(126s)->LLD(75s)->LP_done
 
@@ -105,17 +104,15 @@
 
 ![1-2](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-2.png)
 
-
+------
 
 ##### PM7/8(87s)->LLC(41s)->PM1/6(60s)->PM2/5(105s)->LLD(39s)->PM9/10(54.6s)->LP_done
 
-<img src="assets\training_metrics_plot13.png" alt="training_metrics_plot13" style="zoom:25%;" />
+![training_metrics_plot13](assets\training_metrics_plot13-1774451320661-4.png)
 
-![1-3](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-3.png)
+![1-3-20](assets\1-3-20.png)
 
-
-
-
+------
 
 ##### PM7/8(50s)->LLC(34s)->PM1/6(53s)[304s/50片]->PM2/3/5(107s)->LLD(34s)->LP_done
 
@@ -123,15 +120,23 @@
 
 ![1-4](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\1-4.png)
 
+------
 
+**PM7/8(50s)->LLC/LLD(37s)->PM9/10(56s)[352s/25片]->LLB**
 
-##### PM7/8(50s)->LLC/LLD(37s)->PM9/10(56s)[352s/25片]->LLB
+![training_metrics_plot15](assets\training_metrics_plot15-1774451386628-7.png)
 
-<img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot15.png" alt="training_metrics_plot15" style="zoom:25%;" />
+![1-5_30](assets\1-5_30.png)
 
-![1-5](assets\1-5.png)
+------
 
+**PM7/8(101s)->LLC(65s)->PM1(41s)[420s/20片]->PM3(93s)**
 
+**->LLD(65s)->PM6(55s)[335s/25片]->LLD(65s)->LLB**
+
+1-6 暂无，单臂下存在死锁
+
+------
 
 ##### PM7/8(70s)->LLC(0s)->PM1/2/3/4(600s)->LLD(70s)->PM9/10(200s)
 
@@ -139,40 +144,19 @@
 
 ![2-1](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\2-1.png)
 
+------
 
-
-
+**PM7/8(70s)->LLC(0s)->PM1/2(300s)->LLD(70s)**
 
 <img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot22.png" alt="training_metrics_plot22" style="zoom:25%;" />
 
 ![2-2](C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\2-2.png)
 
+------
 
-
-
+**PM7/8(70s)->PM9/10(200s)**
 
 <img src="C:\Users\khand\OneDrive\code\dqn\CT\plan\assets\training_metrics_plot24.png" alt="training_metrics_plot24" style="zoom:25%;" />
 
 ![2-4](assets\2-4.png)
 
-
-
-
-
-
-
-
-
-
-
-
-
-```
-PM7/8(101s)->LLC(65s)->PM1(41s)[420s/20片]->PM3(93s)->LLD(65s)->PM6(55s)[335s/25片]->LLD(65s)->LLB
-```
-
-
-
-附录示意图：
-
-![示意图](assets/image-20260319160731282.png)

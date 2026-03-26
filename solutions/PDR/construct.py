@@ -1,7 +1,8 @@
 import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union, Set
-from solutions.model.pn_models import Place
+
+from src.pn_models import FlatMarks
 
 # 支持路线中分叉：Stage = "PM7" 或 ["PM7","PM8"]
 Stage = Union[str, List[str]]
@@ -202,8 +203,17 @@ class SuperPetriBuilder:
 
         # 3) 汇总所有路线的相邻模块边
         all_edges: Set[Tuple[str, str]] = set()
+        downstream_block_map: Dict[str, Set[str]] = {}
         for route in routes:
             all_edges |= self.expand_route_to_edges(route)
+            for i in range(len(route) - 1):
+                left = self._as_list(route[i])
+                right = self._as_list(route[i + 1])
+                for src in left:
+                    if src not in downstream_block_map:
+                        downstream_block_map[src] = set()
+                    downstream_block_map[src].update(right)
+        self._downstream_block_map = downstream_block_map
 
         # 2) 运输库所按 (TMx, dst) 共享，避免共享 t 时出现多前置死锁
         # 命名规则：
@@ -311,59 +321,104 @@ class SuperPetriBuilder:
         capacity = np.array(self._cap_by_pid, dtype=int)
         ttime = np.array(self._ttime_by_tid, dtype=int)
 
-        marks = []
-        # idle_places: 非工艺晶圆 token（若存在）不需要 ID
-        # 通过名称判断而非硬编码索引，兼容是否存在 r_ 资源库所
-        token_id_counter = 0  # 全局 token ID 计数器
-        
+        place_type_arr = np.zeros(P, dtype=np.int8)
+        place_cat = np.zeros(P, dtype=np.int8)  # 0=cap1_wafer, 1=multi_wafer, 2=resource
+        _multi_wafer_pids: set[int] = set()
+        _resource_pids: set[int] = set()
+
         for i in range(P):
             pname = self.id2p_name[i]
-            if pname.startswith('LP') and pname in getattr(self, '_modules', {}):
+            if pname.startswith("LP") and pname in getattr(self, "_modules", {}):
                 ptype = 3
-            elif pname.startswith('d'):
+            elif pname.startswith("d"):
                 ptype = 2
-            elif pname in getattr(self, '_modules', {}):
+            elif pname in getattr(self, "_modules", {}):
                 ptype = 1
             else:
                 ptype = 4
 
-            place = Place(
-                name=pname,
-                capacity=int(capacity[i]),
-                processing_time=int(ptime[i]),
-                type=ptype
+            place_type_arr[i] = ptype
+            if ptype == 4:
+                place_cat[i] = 2
+                _resource_pids.add(i)
+            elif capacity[i] > 1:
+                place_cat[i] = 1
+                _multi_wafer_pids.add(i)
+            else:
+                place_cat[i] = 0
+
+        token_place = np.full(n_wafer, -1, dtype=np.int32)
+        token_enter_time = np.zeros(n_wafer, dtype=np.int32)
+        place_token = np.full(P, -1, dtype=np.int32)
+        wafer_queues: Dict[int, List[int]] = {p: [] for p in _multi_wafer_pids}
+        resource_queues: Dict[int, List[int]] = {p: [] for p in _resource_pids}
+
+        token_id_counter = 0
+
+        def allocate_ids(cnt: int) -> List[int]:
+            nonlocal token_id_counter
+            nxt = token_id_counter + int(cnt)
+            if nxt > n_wafer:
+                raise ValueError(
+                    f"Initial wafer token count exceeds n_wafer: {nxt} > {n_wafer}"
+                )
+            ids = list(range(token_id_counter, nxt))
+            token_id_counter = nxt
+            return ids
+
+        for i in range(P):
+            cnt = int(m0[i])
+            if cnt <= 0:
+                continue
+
+            cat = int(place_cat[i])
+            if cat == 2:
+                resource_queues[i].extend([0] * cnt)
+                continue
+
+            tids = allocate_ids(cnt)
+            if cat == 0:
+                # cap=1 晶圆库所只记录单 token 映射
+                place_token[i] = int(tids[-1])
+            else:
+                wafer_queues[i].extend(int(tid) for tid in tids)
+
+            for tid in tids:
+                token_place[tid] = i
+                token_enter_time[tid] = 0
+
+        if token_id_counter != n_wafer:
+            raise ValueError(
+                f"Initial wafer token mismatch: assigned={token_id_counter}, expected={n_wafer}"
             )
 
-            cnt = m0[i]
-            if cnt > 0:
-                # 资源库所（r_ 开头）的 token 不需要 ID
-                if pname.startswith('r_'):
-                    for _ in range(cnt):
-                        place.append(BasedToken(enter_time=0))
-                # LP1 库所的初始 token 分配唯一 ID，路线1，步骤0
-                elif pname == "LP1":
-                    for _ in range(cnt):
-                        place.append(BasedToken(enter_time=0, token_id=token_id_counter, route_type=1, step=0))
-                        token_id_counter += 1
-                # LP2 库所的初始 token 分配唯一 ID，路线2，步骤0
-                elif pname == "LP2":
-                    for _ in range(cnt):
-                        place.append(BasedToken(enter_time=0, token_id=token_id_counter, route_type=2, step=0))
-                        token_id_counter += 1
-                # 单起点 LP 库所（向后兼容）
-                elif pname == "LP":
-                    for tok_id in range(cnt):
-                        place.append(BasedToken(enter_time=0, token_id=tok_id, route_type=0, step=0))
-                else:
-                    for _ in range(cnt):
-                        place.append(BasedToken(enter_time=0))
-            marks.append(place)
+        marks = FlatMarks(
+            token_place=token_place,
+            token_enter_time=token_enter_time,
+            place_token=place_token,
+            wafer_queues=wafer_queues,
+            resource_queues=resource_queues,
+        )
+
+        _pre_places_idx = []
+        _pst_places_idx = []
+        lp_t_idx = []
+        for t in range(T):
+            pre_idx = np.nonzero(pre[:, t] > 0)[0].astype(np.int32)
+            pst_idx = np.nonzero(pst[:, t] > 0)[0].astype(np.int32)
+            _pre_places_idx.append(pre_idx)
+            _pst_places_idx.append(pst_idx)
+            if self.id2t_name[t].startswith("u_LP_TM2"):
+                lp_t_idx.append(t)
 
         return {
             "m0": m0,
             "md": md,
             "pre": pre,
             "pst": pst,
+            "pre_place_cache": _pre_places_idx,
+            "pst_place_cache": _pst_places_idx,
+            "lp_t_idx": lp_t_idx,
             "ptime": ptime,
             "ttime": ttime,
             "capacity": capacity,
@@ -372,9 +427,17 @@ class SuperPetriBuilder:
             "idle_idx": idle_idx,
             "module_x": module_x,
             "marks": marks,
+            "place_type_arr": place_type_arr,
+            "place_cat": place_cat,
+            "_multi_wafer_pids": _multi_wafer_pids,
+            "_resource_pids": _resource_pids,
             "n_wafer": n_wafer,
             "n_wafer_route1": n_wafer_route1,
             "n_wafer_route2": n_wafer_route2,
+            "downstream_block_map": {
+                src: sorted(list(dsts))
+                for src, dsts in getattr(self, "_downstream_block_map", {}).items()
+            },
         }
 
 
@@ -394,7 +457,7 @@ def build_pdr_net(n_wafer: int = 7) -> Dict[str, Any]:
         "LLC": ModuleSpec(tokens=0, ptime=0, capacity=1),
         "PM1": ModuleSpec(tokens=0, ptime=300, capacity=1),
         "PM2": ModuleSpec(tokens=0, ptime=300, capacity=1),
-        "LLD": ModuleSpec(tokens=0, ptime=0, capacity=1),
+        "LLD": ModuleSpec(tokens=0, ptime=70, capacity=1),
         "LP_done": ModuleSpec(tokens=0, ptime=0, capacity=int(n_wafer)),
     }
     robots = {

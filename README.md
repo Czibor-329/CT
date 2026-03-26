@@ -16,7 +16,7 @@
 
 **DocRef**：`docs/training/training-guide.md`、`docs/visualization/ui-guide.md`、`docs/overview/project-context.md`。
 
-## Continuous_model 架构（概览）
+## 架构（概览）
 
 下图描述 **cascade** 主路径上的构网、设备模拟、训练与可视化；并发双机械手见 `solutions/Continuous_model/pn.py` 与 `solutions/Continuous_model/train_concurrent.py`，以 `docs/` 为准。下方「历史 Log」可能与最新实现不一致时，**以 `docs/` 与源码为准**。
 
@@ -54,25 +54,24 @@ flowchart LR
 
   subgraph sim[Cluster Tool Env Module]
     direction TB
-    B1[Calculate Cycle]
     B2[Get Action Mask]
     B3[Advance Time & Fire]
     B4[Build Observation]
-    B1 --> B2 --> B3 --> B4
+    B2 --> B3 --> B4
   end
 
   subgraph train[Training Module]
     direction TB
-    C1[Vector Env]
     C2[Collect Rollout]
     C3[Backward Optimize]
-    C1 --> C2 --> C3
+    C2 --> C3
   end
 
   subgraph viz[Visualization Module]
     direction TB
     D1[Model Evaluation]
     D2[JSON Replay Evaluation]
+    D3[Draw Gantt]
   end
 
   net --> sim
@@ -92,10 +91,14 @@ flowchart LR
   class A1,A2,A3,A4 netNode;
   class B1,B2,B3,B4 simNode;
   class C1,C2,C3 trainNode;
-  class D1,D2 vizNode;
+  class D1,D2,D3 vizNode;
 
   linkStyle default stroke-width:3px;
 ```
+
+<img src="assets\image-20260325231830208.png" alt="image-20260325231830208" style="zoom: 67%;" />
+
+
 
 **数据流（摘要）**
 
