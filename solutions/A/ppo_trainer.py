@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
-from data.ppo_configs.training_config import PPOTrainingConfig
+from config.training.training_config import PPOTrainingConfig
 from pathlib import Path
 from results.paths import (
     action_sequence_path,
@@ -816,7 +816,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     root = Path(__file__).parents[2]
-    path = root / "data" / "ppo_configs" / "s_train.json"
+    path = root / "config" / "training" / "s_train.yaml"
     cfg = PPOTrainingConfig.load(path)
     if args.compute_device is not None:
         cfg.device = args.compute_device.strip()

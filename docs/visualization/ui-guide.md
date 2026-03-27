@@ -36,7 +36,7 @@
   - `--model/-m`, `--no-model`, `--debug`, `--quiet`
 - 配置菜单（级联）:
   - **路径（级联）**：可选 `1-1`…`1-6`、`2-1`…`2-4`（与 `data/petri_configs/cascade_routes_1_star.json` 中 `routes` 键一致）。确认后重建环境与适配器；若已选模型文件会尝试按新拓扑重载，不兼容则卸载 Model A。
-  - 依赖启动时加载的 `data/petri_configs/cascade.json`（含 `single_route_config_path`）；仅 `device=cascade` 时菜单项可用。
+  - 依赖启动时加载的 `data/petri_configs/cascade.yaml`（含 `single_route_config_path`）；仅 `device=cascade` 时菜单项可用。
 - 画布顶栏:
   - 级联模式下在中间画布**上方**显示带边框区域：仅展示配置中 `routes[name].path`（**不**显示路线键名如 `1-6`，无额外标题行）；约 15px **粗体**，腔室名 / `(加工秒)` / `[清洁秒/片]` / `->` 分色。单设备模式下该区域隐藏。
 - 回放 JSON 契约（建议）:

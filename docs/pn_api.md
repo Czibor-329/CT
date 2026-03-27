@@ -42,9 +42,10 @@
 Petri(
     config: Optional[PetriEnvConfig] = None,
     stop_on_scrap: Optional[bool] = None,
-    reward_config: Optional[Dict[str, int]] = None
 )
 ```
+
+（奖励分项开关不再通过参数或 `PetriEnvConfig` 配置；运行时固定全开。）
 
 **常用方法**
 - `reset()` 重置环境
@@ -88,7 +89,6 @@ class BasedToken:
 常用配置项：
 - `n_wafer`
 - `stop_on_scrap`
-- `reward_config`
 - `max_wafers_in_system`
 - `optimize_reward_calc`
 - `optimize_state_update`
@@ -219,7 +219,7 @@ class BasedToken:
 **停滞惩罚（单设备已接入）**
 - 沿用 `pn.py` 思路：累计连续 WAIT 时间（`_consecutive_wait_time`）
 - 当累计时间达到 `idle_timeout = max(processing_time)+30` 且未触发过时，施加一次 `idle_timeout_penalty`
-- 运输位超时惩罚：`d_TM1`（type=2）内晶圆停留超过 `D_Residual_time` 后按超时秒数线性扣分，受 `reward_config["transport_penalty"]` 控制，系数为 `transport_overtime_coef`
+- 运输位超时惩罚：`d_TM1`（type=2）内晶圆停留超过 `D_Residual_time` 后按超时秒数线性扣分；奖励分项固定启用，系数为 `transport_overtime_coef`（与 `ClusterTool` 内系数字段一致）
 
 **死锁终止语义（单设备）**
 - 发生死锁时，episode 终止，增加 `deadlock_count`。

@@ -6,7 +6,7 @@
 
 | 目的 | 命令（示例） | 说明 |
 |------|--------------|------|
-| 级联单设备训练 | `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1` | 训练配置：`data/ppo_configs/s_train.json`；可选 `--compute-device`（`cpu` 或 `cuda`）、`--checkpoint` |
+| 级联单设备训练 | `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1` | 训练配置：`data/ppo_configs/s_train.yaml`；可选 `--compute-device`（`cpu` 或 `cuda`）、`--checkpoint` |
 | 强制 CPU 更新 | `python -m solutions.Continuous_model.train_single --device cascade --compute-device cpu` | 环境步进在 CPU 上，rollout 后再送入计算设备（见 `env_single` 说明） |
 | 并发双机械手训练 | `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json` | 跨机器时若默认 config 为绝对路径，请改为显式相对路径（见 `docs/training/training-guide.md`） |
 | 导出推理序列 | `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>` | 默认写入 `results/action_sequences/tmp.json`，含 `replay_env_overrides` |
@@ -114,7 +114,7 @@ flowchart LR
 
 **数据流（摘要）**
 
-1. `data/petri_configs/`（如 `cascade.json`）经 `PetriEnvConfig` 提供构网与环境参数。
+1. `data/petri_configs/`（如 `cascade.yaml`）经 `PetriEnvConfig` 提供构网与环境参数。
 2. `construct_single.build_net`：固定拓扑 + route 编译 → token 路由队列 → `build_marks` 等产出 marks / `process_time_map`。
 3. `pn_single.ClusterTool`：节拍与 `get_action_mask`、时间推进、`step`、reward。
 4. `env_single.Env_PN_Single`：TorchRL 风格 `reset` / `step`、`action_mask`、观测张量。

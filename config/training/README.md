@@ -1,16 +1,21 @@
 # PPO训练配置文件说明
 
+## Abstract
+
+- **What**：`PPOTrainingConfig` 为 Pydantic 模型；磁盘格式以 **YAML** 为主（`.yaml`/`.yml`），`load` 仍可读 **JSON**（`.json`）。
+- **When**：调整 PPO 超参、复现实验时编辑 `s_train.yaml` 或通过 `PPOTrainingConfig.load(path)` 加载。
+- **Not**：本类不包含行为克隆等未在 `training_config.py` 中声明的字段；多余键会被忽略。
+- **Key rules**：根目录 `requirements.txt` 需包含 `pydantic>=2`、`PyYAML>=6`。
+
 ## 目录结构
 
 ```
 data/ppo_configs/
-├── __init__.py                 # 模块初始化文件
-├── training_config.py          # 配置类定义
-├── default_config.json         # 默认配置
-├── phase1_config.json          # 阶段1配置（仅报废惩罚）
-├── phase2_config.json          # 阶段2配置（完整奖励）
-├── training_runs/              # 保存每次训练运行的配置
-└── README.md                   # 本说明文件
+├── __init__.py
+├── training_config.py          # PPOTrainingConfig（Pydantic）
+├── s_train.yaml                # 级联训练默认超参（主路径）
+├── usage_example.py
+└── README.md
 ```
 
 ## 配置参数说明
@@ -34,17 +39,9 @@ data/ppo_configs/
 - `entropy_start`: 初始熵系数（默认: 0.02）
 - `entropy_end`: 最终熵系数（默认: 0.01）
 
-### 行为克隆参数
-- `lambda_bc0`: BC权重初始值（默认: 1.0）
-- `bc_decay_batches`: BC权重衰减的批次数（默认: 200）
-- `bc_weight_early`: 早期BC权重（默认: 2.0）
-- `bc_weight_late`: 后期BC权重（默认: 0.1）
-- `bc_switch_batch`: BC权重切换的批次数（默认: 100）
-
 ### 其他参数
 - `device`: 计算设备（"cpu" 或 "cuda"）
 - `seed`: 随机种子（默认: 42）
-- `with_pretrain`: 是否使用预训练（默认: false）
 
 ## 使用方法
 
@@ -73,7 +70,7 @@ log, policy = train(env, eval_env, config=config)
 from data.ppo_configs.training_config import PPOTrainingConfig
 
 # 加载配置文件
-config = PPOTrainingConfig.load("data/ppo_configs/s_train.json")
+config = PPOTrainingConfig.load("data/ppo_configs/s_train.yaml")
 
 # 训练
 log, policy = train(env, eval_env, config=config)
@@ -94,14 +91,13 @@ log, policy = train(
 
 ```python
 config = PPOTrainingConfig(n_hidden=256, lr=5e-4)
-config.save("data/ppo_configs/my_config.json")
+config.save("data/ppo_configs/my_config.yaml")  # 或 .json，由后缀决定格式
 ```
 
 ## 配置文件管理
 
-每次训练运行时，使用的配置会自动保存到 `training_runs/` 目录下，文件名格式为：
-```
-config_ppo_{时间戳}.json
-```
+`solutions/C/train.py` 在每次训练开始会将当前配置写入 `results/training_logs/`，文件名形如 `config_ppo_{时间戳}.yaml`（后缀由 `save` 路径决定）。
 
-这样可以追溯每次训练使用的具体配置参数。
+## Related Docs
+
+- `docs/training/training-guide.md`

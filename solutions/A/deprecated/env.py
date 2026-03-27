@@ -44,8 +44,7 @@ class Env_PN_Concurrent(EnvBase):
         "u_s2_s3", "u_s3_s4", "t_s3", "t_s4"
     ]
 
-    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False,
-                 reward_config: Optional[Dict[str, int]] = None):
+    def __init__(self, device='cpu', seed=None, detailed_reward: bool = False):
         super().__init__(device=device)
 
         # 加载配置（固定使用 phase2_config.json）

@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-03-27
+
+### PetriEnvConfig：Pydantic + YAML；移除 reward_config（2026-03-27）
+
+- **What changed**：`data/petri_configs/env_config.py` 改为 Pydantic 模型；默认级联配置为 `data/petri_configs/cascade.yaml`；删除 `cascade.json`。`PetriEnvConfig` 不再包含 `reward_config` 字段；`load` 会丢弃文件中的 `reward_config` 键。`ClusterTool` 中奖励分项布尔开关固定为 `True`；`solutions/A/deprecated/pn.py` 内 `Petri.reward_config` 仍为全开字典。`Env_PN_Single` 默认加载 `cascade.yaml` 并去掉 `reward_config` 形参。`warn_coef_penalty` 类型改为 `float`（与 `cascade.yaml` 一致）。可视化 `config_editor` 去掉 `reward_config` 表单项并支持 YAML 读写。
+- **Why**：配置只保留系数与拓扑；奖励分项不再在 cascade 中切换。
+- **Impact**：外部若传入 `Env_PN_Single(..., reward_config=...)` 需删除该参数；旧 JSON 中含 `reward_config` 仍可加载但被忽略。
+
+### PPO 训练配置：YAML + Pydantic（2026-03-27）
+
+- **What changed**：`data/ppo_configs/training_config.py` 中 `PPOTrainingConfig` 改为 Pydantic v2 模型；默认磁盘配置为 `data/ppo_configs/s_train.yaml`；`load` 按后缀支持 `.yaml`/`.yml`/`.json`；`save` 按后缀写 YAML 或 JSON；删除 `s_train.json`。根目录新增 `requirements.txt`（`pydantic>=2`、`PyYAML>=6`）。`solutions/A/ppo_trainer.py` 默认加载 `s_train.yaml`；`solutions/C/train.py` 将运行中备份配置扩展名改为 `.yaml`。
+- **Why**：用结构化模型校验训练超参，YAML 便于手写与 diff。
+- **Impact**：须在环境中安装上述依赖；若外部脚本仍指向 `s_train.json`，请改为 `s_train.yaml` 或继续使用 `load` 读任意路径的 `.json` 文件。
+
 ## 2026-03-26
 
 ### construct 迁移兼容：deprecated 承接 legacy 构网类 (2026-03-26)

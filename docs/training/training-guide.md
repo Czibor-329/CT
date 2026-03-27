@@ -19,7 +19,7 @@
   - UI 回放细节。
 
 ## Architecture or Data Flow
-1. 读取配置 (`data/ppo_configs/*.json`)。
+1. 读取配置（`data/ppo_configs/*.yaml` 或 `.json`；级联默认 `s_train.yaml`）。
 2. 构建环境 (`Env_PN_Single` 或 `Env_PN_Concurrent`)。
 3. rollout 采样与 PPO 更新。
 4. 保存 best/final 权重。
@@ -39,7 +39,7 @@
   - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`（输出 `results/action_sequences/<out_name>.json`，默认 `--out-name tmp` 即 `results/action_sequences/tmp.json`）
   - `--model` 为已存在的 `.pt` 文件路径时直接使用；否则按 `results/models/<相对路径>` 解析。
 - 关键配置优先级:
-  - cascade: `s_train.json` 作为基础，CLI 参数覆盖。
+  - cascade: `data/ppo_configs/s_train.yaml` 作为基础，CLI 参数覆盖。
   - concurrent: `--config` 文件优先，不存在时退回默认配置对象。
 
 ## Behavior Rules

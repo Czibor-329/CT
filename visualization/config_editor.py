@@ -1,11 +1,13 @@
 """
-配置编辑器 - 编辑 PetriEnvConfig JSON
+配置编辑器 - 编辑 Petri 环境配置（YAML / JSON）
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import yaml
 from typing import Dict, Any
 
 from PySide6.QtCore import Qt
@@ -34,7 +36,7 @@ class ConfigEditor(QWidget):
         self.setMinimumWidth(480)
 
         self.path_edit = QLineEdit()
-        self.path_edit.setText(str(Path("data/petri_configs/phase2_config.json")))
+        self.path_edit.setText(str(Path("data/petri_configs/cascade.yaml")))
 
         self.fields: Dict[str, Any] = {}
 
@@ -115,32 +117,20 @@ class ConfigEditor(QWidget):
         layout.addRow("T_safe", self.fields["T_safe"])
         layout.addRow("b_safe", self.fields["b_safe"])
 
-        # reward_config 开关
-        self.fields["reward_config.proc_reward"] = self._check(True)
-        self.fields["reward_config.safe_reward"] = self._check(True)
-        self.fields["reward_config.penalty"] = self._check(True)
-        self.fields["reward_config.warn_penalty"] = self._check(True)
-        self.fields["reward_config.transport_penalty"] = self._check(True)
-        self.fields["reward_config.congestion_penalty"] = self._check(False)
-        self.fields["reward_config.time_cost"] = self._check(True)
-        self.fields["reward_config.release_violation_penalty"] = self._check(True)
-
-        layout.addRow("proc_reward", self.fields["reward_config.proc_reward"])
-        layout.addRow("safe_reward", self.fields["reward_config.safe_reward"])
-        layout.addRow("penalty", self.fields["reward_config.penalty"])
-        layout.addRow("warn_penalty", self.fields["reward_config.warn_penalty"])
-        layout.addRow("transport_penalty", self.fields["reward_config.transport_penalty"])
-        layout.addRow("congestion_penalty", self.fields["reward_config.congestion_penalty"])
-        layout.addRow("time_cost", self.fields["reward_config.time_cost"])
-        layout.addRow("release_violation_penalty", self.fields["reward_config.release_violation_penalty"])
-
     def load_config(self) -> None:
         path = Path(self.path_edit.text())
         if not path.exists():
             QMessageBox.warning(self, "加载失败", f"找不到配置文件: {path}")
             return
 
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        if path.suffix.lower() in (".yaml", ".yml"):
+            data = yaml.safe_load(raw)
+        else:
+            data = json.loads(raw)
+        if not isinstance(data, dict):
+            QMessageBox.warning(self, "加载失败", "配置文件顶层必须是对象/映射")
+            return
         # 旧参数名迁移（兼容旧 JSON）
         if "done_event_reward" not in data and "R_done" in data:
             data["done_event_reward"] = data["R_done"]
@@ -164,7 +154,13 @@ class ConfigEditor(QWidget):
             self._set_value(data, key, value)
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        if path.suffix.lower() in (".yaml", ".yml"):
+            path.write_text(
+                yaml.safe_dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                encoding="utf-8",
+            )
+        else:
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         QMessageBox.information(self, "保存成功", f"已保存到 {path}")
 
     def _spin(self, min_val: int, max_val: int, default: int) -> QSpinBox:

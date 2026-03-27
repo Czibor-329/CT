@@ -68,7 +68,7 @@ def train(
     # 保存本次训练使用的配置
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     config_prefix = "config_ppo"
-    config_save_path = training_log_output_path(f"{config_prefix}_{timestamp}.json")
+    config_save_path = training_log_output_path(f"{config_prefix}_{timestamp}.yaml")
     config.save(str(config_save_path))
     
     torch.manual_seed(config.seed)

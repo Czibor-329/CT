@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover - numba 可选依赖
     njit = None
     prange = range
 
-from data.petri_configs.env_config import PetriEnvConfig
+from config.cluster_tool.env_config import PetriEnvConfig
 from solutions.A.construct import BasedToken
 from solutions.A.model_builder import build_net
 from solutions.A.construct.route_compiler_single import normalize_route_spec
@@ -212,7 +212,7 @@ class ClusterTool:
         self.idle_event_penalty = float(config.idle_event_penalty)
         self.release_event_penalty = float(config.release_event_penalty)
         
-        self.warn_coef_penalty = int(config.warn_coef_penalty)
+        self.warn_coef_penalty = float(config.warn_coef_penalty)
         self.processing_coef_reward = float(config.processing_coef_reward)
         self.transport_overtime_coef_penalty = float(config.transport_overtime_coef_penalty)
         self.time_coef_penalty = float(config.time_coef_penalty)
@@ -223,8 +223,7 @@ class ClusterTool:
         self.T_load = int(config.T_load)
         
         self.stop_on_scrap = bool(config.stop_on_scrap)
-        
-        self.reward_config = dict(config.reward_config)
+
         self.robot_capacity = 1
         self._dual_arm = bool(getattr(config, 'dual_arm', False))
         self.swap_duration = 10
@@ -464,10 +463,10 @@ class ClusterTool:
         }
         self._last_state_scan: Dict[str, Any] = {}
         self._is_cascade: bool = (self.device_mode == "cascade")
-        self._do_time_cost: bool = bool(self.reward_config.get("time_cost", 1))
-        self._do_proc_reward: bool = bool(self.reward_config.get("proc_reward", 1))
-        self._do_transport_penalty: bool = bool(self.reward_config.get("transport_penalty", 1))
-        self._do_warn_penalty: bool = bool(self.reward_config.get("warn_penalty", 1))
+        self._do_time_cost: bool = True
+        self._do_proc_reward: bool = True
+        self._do_transport_penalty: bool = True
+        self._do_warn_penalty: bool = True
         self._ready_chambers_set: frozenset = frozenset(self._ready_chambers)
         self._place_by_name: Dict[str, Place] = {}
         self._obs_place_names: List[str] = []

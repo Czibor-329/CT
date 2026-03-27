@@ -40,8 +40,8 @@
   - Td_petri 主入口: `python -m solutions.Td_petri.tdpn`
 - 关键配置:
   - `data/petri_configs/single.json`
-  - `data/petri_configs/cascade.json`
-  - `data/ppo_configs/s_train.json`
+  - `data/petri_configs/cascade.yaml`
+  - `data/ppo_configs/s_train.yaml`
 
 ## Behavior Rules
 1. 文档层“权威入口”仅指向 5 个主文档。

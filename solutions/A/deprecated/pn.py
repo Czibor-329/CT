@@ -19,11 +19,24 @@ import numpy as np
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple, Union
 from visualization.plot import plot_gantt_hatched_residence, Op
 from solutions.A.construct import SuperPetriBuilder, ModuleSpec, RobotSpec, BasedToken
-from data.petri_configs.env_config import PetriEnvConfig
+from config.cluster_tool.env_config import PetriEnvConfig
 import traceback
 
 INF = 10**6
 MAX_TIME = 4000  # 例如 300s
+
+# 奖励分项开关：固定全开（不再由 PetriEnvConfig 配置）
+_REWARD_SWITCHES_ALL_ON: Dict[str, int] = {
+    "proc_reward": 1,
+    "safe_reward": 1,
+    "penalty": 1,
+    "warn_penalty": 1,
+    "transport_penalty": 1,
+    "congestion_penalty": 1,
+    "time_cost": 1,
+    "in_system_time_penalty": 1,
+    "release_violation_penalty": 1,
+}
 
 # 双机械手变迁映射：TM2/TM3 各自控制的变迁名称
 TM2_TRANSITIONS = frozenset({
@@ -506,7 +519,6 @@ class LL(Place):
 class Petri:
     def __init__(self, config: Optional[PetriEnvConfig] = None,
                  stop_on_scrap: Optional[bool] = None,
-                 reward_config: Optional[Dict[str, int]] = None,
                  enable_statistics: bool = False) -> None:
         """
         初始化 Petri 网环境。
@@ -520,7 +532,6 @@ class Petri:
         Args:
             config: PetriEnvConfig配置对象（推荐使用）
             stop_on_scrap: 报废时是否停止（如果config为None时使用）
-            reward_config: 奖励配置（如果config为None时使用）
         """
         # -----------------------
         # 1) 加载或创建配置
@@ -530,8 +541,6 @@ class Petri:
             kwargs = {}
             if stop_on_scrap is not None:
                 kwargs['stop_on_scrap'] = stop_on_scrap
-            if reward_config is not None:
-                kwargs['reward_config'] = reward_config
             config = PetriEnvConfig(**kwargs)
         
         # 保存配置
@@ -557,7 +566,7 @@ class Petri:
         self.idle_event_penalty = config.idle_event_penalty
         # idle_timeout 在 marks 就绪后设为 最大处理时间+30，见下方
         self.stop_on_scrap = config.stop_on_scrap
-        self.reward_config = config.reward_config
+        self.reward_config = dict(_REWARD_SWITCHES_ALL_ON)
         
         # ============ 性能优化配置 ============
         # 内部状态

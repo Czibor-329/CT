@@ -15,7 +15,7 @@ from tensordict import TensorDict
 from torchrl.data import Binary, Categorical, Composite, Unbounded
 from torchrl.envs import EnvBase
 
-from data.petri_configs.env_config import PetriEnvConfig
+from config.cluster_tool.env_config import PetriEnvConfig
 from solutions.A.petri_net import ClusterTool
 from pathlib import Path
 
@@ -82,7 +82,6 @@ class Env_PN_Single(EnvBase):
         seed=None,
         eval_mode: bool = False,
         device_mode: str = "cascade",
-        reward_config: Optional[Dict[str, int]] = None,
         robot_capacity: int = 1,
         route_code: Optional[int] = None,
         single_route_config: Optional[Dict[str, Any]] = None,
@@ -93,14 +92,12 @@ class Env_PN_Single(EnvBase):
         super().__init__(device=device)
         self.eval_mode = eval_mode
 
-        dir = Path(__file__).parents[2] / "data" / "petri_configs"
+        dir = Path(__file__).parents[2] / "config" / "cluster_tool"
         mode_name = str(device_mode).lower()
         if mode_name != "cascade":
             raise ValueError("Env_PN_Single now supports cascade mode only")
-        path = dir / "cascade.json"
-        config = PetriEnvConfig().load(path=path)
-        if reward_config:
-            config.reward_config.update(reward_config)
+        path = dir / "cascade.yaml"
+        config = PetriEnvConfig.load(path)
         config.device_mode = str(device_mode).lower()
         config.single_robot_capacity = 2 if int(robot_capacity) == 2 else 1
         if route_code is not None:
