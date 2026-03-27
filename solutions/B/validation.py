@@ -13,6 +13,7 @@ from .training_config import TrainingConfig
 from .Env import Env
 from .parse_sequences import export_single_replay_payload
 from .train import build_policy_actor
+from results.paths import model_output_path
 
 
 EVAL_RUNS = 5
@@ -174,7 +175,7 @@ def main() -> None:
     parser.add_argument("--model-path", type=str, required=True, help="模型权重路径")
     args = parser.parse_args()
 
-    model_path = Path(__file__).resolve().parents[1] / "saved_models" / args.model_path
+    model_path = model_output_path(args.model_path)
     if not model_path.exists():
         raise FileNotFoundError(f"model file not found: {model_path}")
     evaluate_model(model_path=str(model_path))

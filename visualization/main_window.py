@@ -36,6 +36,7 @@ from .viewmodel import PetriViewModel
 from .widgets.stats_panel import StatsPanel
 from .widgets.center_canvas import CenterCanvas
 from .widgets.control_panel import ControlPanel
+from results.paths import action_sequence_path, gantt_output_path
 
 class RoundedContainer(QWidget):
     """主内容容器，用于绘制背景"""
@@ -101,7 +102,7 @@ class PetriMainWindow(QMainWindow):
         }
         self._model_path_override: Path | None = None
         self._model_apply_callback = None
-        self._action_sequence_default_dir = Path("seq")
+        self._action_sequence_default_dir = action_sequence_path("tmp").parent
         self._action_sequence_path: Path | None = None
         self._adapter_factory = None
         self._cascade_route_name: str | None = None
@@ -1127,12 +1128,7 @@ class PetriMainWindow(QMainWindow):
     def _on_gantt_clicked(self) -> None:
         """Handle Draw Gantt button click"""
         try:
-            # Create results directory if it doesn't exist
-            results_dir = Path("results")
-            results_dir.mkdir(exist_ok=True)
-            
-            # 固定输出文件名（覆盖写入）
-            output_path = results_dir / "gantt.png"
+            output_path = gantt_output_path("ui_gantt.png")
             
             success = self.viewmodel.render_gantt(str(output_path))
             

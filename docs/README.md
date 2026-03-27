@@ -44,6 +44,7 @@
 1. 所有主文档必须包含固定章节：`Abstract / Scope / Architecture or Data Flow / Interfaces / Behavior Rules / Examples / Edge Cases / Related Docs / Change Notes`。
 2. 新增或修改 CLI 参数后，必须同步更新对应主题主文档和本索引。
 3. 若移除接口，必须在兼容页写明“新路径 + 迁移日期 + 差异说明”。
+4. 输出产物路径必须遵守仓库统一规范：`results/action_sequences`、`results/gantt`、`results/training_logs`、`results/topology_cache`、`results/models`。
 
 ## Change Notes
 - 2026-03-19: 重构为“1 个入口 + 5 个主文档 + 附录 + deprecated 兼容层”。

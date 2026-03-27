@@ -89,15 +89,15 @@
   - `search() -> bool`
 - `solutions/PDR/train.py`
   - `python -m solutions.PDR.train`：PPO 训练入口
-  - 默认训练指标输出：`results/training_metrics.json`
+  - 默认训练指标输出：`results/training_logs/b_training_metrics.json`
 - `solutions/PDR/parse_sequences.py`
   - `build_single_replay_payload(full_transition_records) -> dict`
-  - `export_single_replay_payload(full_transition_records, out_name) -> Path`，输出 `seq/<out_name>.json`
+  - `export_single_replay_payload(full_transition_records, out_name) -> Path`，输出 `results/action_sequences/<out_name>.json`
 - `solutions/PDR/plot_train_metrics.py`
   - `python -m solutions.PDR.plot_train_metrics --input <training_metrics.json> --output <out.png>`
   - `python -m solutions.PDR.plot_train_metrics --compare-inputs <a.json> <b.json> --output <out.png>`
 - `solutions/PDR/run_pdr.py`
-  - `main()` 在 `search()` 完成后自动导出 `seq/pdr_sequence.json`
+  - `main()` 在 `search()` 完成后自动导出 `results/action_sequences/pdr_sequence.json`
 
 ## Examples
 - 正例：调用 `build_pdr_net()` 后检查存在 `TM2/TM3` 资源库所与 `d_TM2_LLC`、`d_TM3_LLD` 这类运输库所，且 `id2t_name` 含 `u_PM7_TM2_1` 与 `t_TM3_PM1`。

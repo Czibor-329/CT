@@ -28,16 +28,16 @@
 ## Interfaces
 - 单设备训练:
   - `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1`
-  - `python -m solutions.Continuous_model.train_single --device cascade --artifact-dir models/my_run`（训练结束后在同目录写出 `best.pt`、`final.pt`、`training_log.json`、`training_metrics.json`（仅 `reward`/`makespan`/`finish`/`scrap` 四键），并在落盘 metrics 后生成 `training_metrics_plot.png`（`eval.plot_train_metrics.plot_metrics`，子图标题带 `路径 <single_route_name>`，有则写）；存在 `best.pt` 时另导出 `seq/<目录名>.json` 与同目录 `gantt.png`（`rollout_and_export` + `render_gantt`，标题同样带路径后缀）；无 best 则跳过序列与甘特）
+  - `python -m solutions.Continuous_model.train_single --device cascade --artifact-dir exp_001`（`--artifact-dir` 作为运行名称前缀；权重写入 `results/models/`，日志与指标写入 `results/training_logs/`，序列写入 `results/action_sequences/`，甘特图写入 `results/gantt/`，标题可带 `路径 <single_route_name>` 后缀）
   - 参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`, `--artifact-dir`
 - 训练指标图（独立运行）:
-  - `python -m solutions.Continuous_model.eval.plot_train_metrics --input <training_metrics.json> --output <out.png>`（可选 `--smooth-window`、`--show`、`--route-label`）
+  - `python -m solutions.Continuous_model.eval.plot_train_metrics --input <training_metrics.json> --output <out.png>`（输出会统一落到 `results/training_logs/`；可选 `--smooth-window`、`--show`、`--route-label`）
 - 并发训练:
   - `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json`
   - 参数: `--config`, `--checkpoint`
 - 导出推理序列:
-  - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`（输出 `seq/<out_name>.json`，默认 `--out-name tmp` 即 `seq/tmp.json`）
-  - `--model` 为已存在的 `.pt` 文件路径时直接使用；否则按 `models/<相对路径>` 解析。
+  - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`（输出 `results/action_sequences/<out_name>.json`，默认 `--out-name tmp` 即 `results/action_sequences/tmp.json`）
+  - `--model` 为已存在的 `.pt` 文件路径时直接使用；否则按 `results/models/<相对路径>` 解析。
 - 关键配置优先级:
   - cascade: `s_train.json` 作为基础，CLI 参数覆盖。
   - concurrent: `--config` 文件优先，不存在时退回默认配置对象。
@@ -45,7 +45,7 @@
 ## Behavior Rules
 1. 训练文档必须同时列出 cascade 与 concurrent 入口，不混用参数。
 2. 产物说明必须区分“公共 best 路径”和“时间戳备份目录”。
-3. 未传 `--artifact-dir` 时 cascade best 仍写入 `models/tmp.pt`；传入 `--artifact-dir` 时 best/final 写入该目录。
+3. 未传 `--artifact-dir` 时输出前缀固定为 `train_single`；传入 `--artifact-dir` 时将其作为输出文件名前缀，产物仍统一写入 `results/` 规范目录。
 4. 禁止继续在主文档中引用已移除的旧观测切换参数。
 
 ## Examples
@@ -60,8 +60,8 @@
 
 ## Edge Cases
 - `train_concurrent.py` 的默认 `--config` 是本机绝对路径，跨机器时应显式传相对路径。
-- cascade 训练 best 权重会覆盖 `models/tmp.pt`，并行实验需额外备份策略。
-- 导出脚本按 `--out-name` 写入 `seq/<out_name>.json`；并发运行须使用不同 `out-name`。
+- cascade 训练 best 权重会覆盖 `results/models/CT_single_best.pt`，并行实验需使用不同运行前缀区分产物。
+- 导出脚本按 `--out-name` 写入 `results/action_sequences/<out_name>.json`；并发运行须使用不同 `out-name`。
 - `training_metrics_plot.png` 由 `eval/plot_train_metrics.py` 绘制：左图 reward（滑动平均）+ makespan 双 y 轴（`makespan==0` 不绘制），右图 finish/scrap 并列柱图；环境若带 `single_route_name`，两子图标题后缀为 `路径 <name>`。标题含中文时依赖系统已安装的无衬线中文字体（Windows 通常已有微软雅黑/黑体；若仍为方框，请安装 Noto Sans CJK 或在环境中配置 Matplotlib 字体）。
 - `gantt.png` 仅在 `--artifact-dir` 且存在 `best.pt` 时由 `export_inference_sequence.rollout_and_export(..., gantt_png_path=...)` 触发；甘特主标题在 `plot_gantt_hatched_residence` 原有文案后追加相同路径后缀（见 `docs/gantt.md` 的 `title_suffix`）。
 - **train_all 多路线批量训练**：暂缓，当前仓库不提供该入口；验收 `train_single --artifact-dir` 后再扩展。
@@ -73,6 +73,7 @@
 - `../deprecated/continuous-solution-design.md`
 
 ## Change Notes
+- 2026-03-27: 统一输出规范：训练与导出产物全面迁移到 `results/` 目录族（`action_sequences/gantt/training_logs/topology_cache/models`）；`--artifact-dir` 改为运行名称前缀，不再控制目录位置。
 - 2026-03-22: `--artifact-dir` 且存在 `best.pt` 时恢复写出 `gantt.png`；`training_metrics_plot.png` 与甘特标题均支持 `路径 <single_route_name>` 后缀（无路线名则不加）。
 - 2026-03-22: 移除 `train_single` 内联 matplotlib dashboard；`training_metrics_plot.png` 改由 `eval.plot_train_metrics.plot_metrics` 在写入 `training_metrics.json` 后生成。
 - 2026-03-22: `--artifact-dir` 下增加 `training_metrics.json`，仅含每 batch 的 `reward`、`makespan`、`finish`、`scrap`。

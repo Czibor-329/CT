@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
-from pathlib import Path
+from results.paths import topology_cache_path
 
 
 _FIXED_CASCADE_TOPOLOGY_VERSION = 3
@@ -103,8 +103,7 @@ def _build_topology() -> Dict[str, object]:
 
 def _load_topology() -> Optional[Dict[str, object]]:
     """从磁盘加载固定拓扑缓存；不存在或损坏则返回 None。"""
-    root = Path(__file__).resolve().parents[2]
-    cache_file = root / "data" / "cache" / f"topology_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz"
+    cache_file = topology_cache_path(f"topology_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz")
     if not cache_file.exists():
         return None
     try:
@@ -137,8 +136,7 @@ def _load_topology() -> Optional[Dict[str, object]]:
 
 
 def _save_transition_id(topology: Mapping[str, object]) -> None:
-    root = Path(__file__).resolve().parents[2]
-    path = root / "data" / "cache" / f"transition_id_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz"
+    path = topology_cache_path(f"transition_id_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz")
     path.parent.mkdir(parents=True, exist_ok=True)
     items = list((topology.get("transition_id") or {}).items())
     np.savez(
@@ -149,8 +147,7 @@ def _save_transition_id(topology: Mapping[str, object]) -> None:
 
 
 def _load_transition_id() -> Optional[Dict[Tuple[str, str], str]]:
-    root = Path(__file__).resolve().parents[2]
-    path = root / "data" / "cache" / f"transition_id_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz"
+    path = topology_cache_path(f"transition_id_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz")
     if not path.exists():
         return None
     try:
@@ -177,8 +174,7 @@ def _derive_transition_id_from_t_target(t_target_place: Mapping[str, str]) -> Di
 
 def _save_topology(topology: Mapping[str, object]) -> None:
     """将固定拓扑写入磁盘缓存，供跨进程复用。"""
-    root = Path(__file__).resolve().parents[2]
-    cache_file = root / "data" / "cache" / f"topology_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz"
+    cache_file = topology_cache_path(f"topology_v{_FIXED_CASCADE_TOPOLOGY_VERSION}.npz")
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     t_target_items = list((topology.get("t_target_place") or {}).items())
     source_transport_items = list((topology.get("source_to_transport_u") or {}).items())

@@ -7,7 +7,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-import re
 from collections import defaultdict, deque
 from datetime import datetime
 from time import perf_counter
@@ -19,6 +18,13 @@ import torch.nn.functional as F
 from torch.optim import Adam
 from data.ppo_configs.training_config import PPOTrainingConfig
 from pathlib import Path
+from results.paths import (
+    action_sequence_path,
+    gantt_output_path,
+    model_output_path,
+    safe_name,
+    training_log_output_path,
+)
 
 import numpy as np
 
@@ -437,24 +443,23 @@ def _save_training_metrics_json(log: dict[str, list] | defaultdict[str, list], p
 
 
 def _postprocess_training_artifacts(
-    log: defaultdict[str, list],
-    artifact_dir: Path,
+    best_model_path: Path,
+    run_name: str,
     device_mode: str,
     config: PPOTrainingConfig,
     route_label: str | None,
 ) -> None:
-    artifact_dir = Path(artifact_dir).resolve()
-    best_pt = artifact_dir / "best.pt"
-    if not best_pt.is_file():
-        print("[artifact] 无 best.pt，跳过序列导出", flush=True)
+    if not best_model_path.is_file():
+        print("[artifact] 无 best 模型，跳过序列导出", flush=True)
         return
-    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", artifact_dir.name) or "train_single_run"
-    gantt_png = artifact_dir / "gantt.png"
+    safe_run_name = safe_name(run_name, "train_single_run")
+    seq_name = Path(action_sequence_path(safe_run_name)).stem
+    gantt_png = gantt_output_path(f"{safe_run_name}_gantt.png")
     out = rollout_and_export(
-        model_path=best_pt,
+        model_path=best_model_path,
         max_steps=8000,
         seed=int(config.seed),
-        out_name=safe,
+        out_name=seq_name,
         force_overwrite_planb=False,
         device_mode=str(device_mode).lower(),
         robot_capacity=1,
@@ -556,18 +561,16 @@ def train_single(
     ultra_state: dict[str, Any] = {}
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    saved_models_dir = os.path.join(os.path.dirname(__file__), "saved_models")
-    os.makedirs(saved_models_dir, exist_ok=True)
-    backup_dir = os.path.join(saved_models_dir, f"single_{timestamp}")
-    os.makedirs(backup_dir, exist_ok=True)
+    backup_dir = model_output_path(f"single_{timestamp}").with_suffix("")
+    backup_dir.mkdir(parents=True, exist_ok=True)
 
     model_prefix = "CT_single"
-    artifact_path = Path(artifact_dir).resolve() if artifact_dir is not None else None
-    if artifact_path is not None:
-        artifact_path.mkdir(parents=True, exist_ok=True)
-        best_model_path = artifact_path / "best.pt"
-    else:
-        best_model_path = Path(__file__).resolve().parents[2] / "models" / "tmp.pt"
+    run_name = "train_single"
+    if artifact_dir is not None:
+        run_name = safe_name(Path(str(artifact_dir)).name, "train_single")
+    best_model_path = model_output_path("CT_single_best.pt")
+    run_best_model_path = model_output_path(f"{run_name}_best.pt")
+    run_final_model_path = model_output_path(f"{run_name}_final.pt")
     best_reward = float("-inf")
     log = defaultdict(list)
 
@@ -708,7 +711,8 @@ def train_single(
         if ep_reward > best_reward and finish_count > 0:
             best_reward = ep_reward
             torch.save(policy_module.state_dict(), best_model_path)
-            backup_path = os.path.join(backup_dir, f"{model_prefix}_best.pt")
+            torch.save(policy_module.state_dict(), run_best_model_path)
+            backup_path = os.path.join(str(backup_dir), f"{model_prefix}_best.pt")
             torch.save(policy_module.state_dict(), backup_path)
             print(f"  -> New best model! reward={ep_reward:.2f}", flush=True)
 
@@ -769,24 +773,25 @@ def train_single(
                 flush=True,
             )
 
-    final_path = os.path.join(backup_dir, f"{model_prefix}_final.pt")
+    final_path = os.path.join(str(backup_dir), f"{model_prefix}_final.pt")
     torch.save(policy_module.state_dict(), final_path)
+    torch.save(policy_module.state_dict(), run_final_model_path)
     print(f"Final model: {final_path}", flush=True)
     print(f"Best model: {best_model_path}", flush=True)
-    if artifact_path is not None:
-        route_label = _artifact_route_label(env)
-        torch.save(policy_module.state_dict(), artifact_path / "final.pt")
-        _save_training_log_json(log, artifact_path / "training_log.json")
-        _save_training_metrics_json(log, artifact_path / "training_metrics.json")
-        metrics_png = artifact_path / "training_metrics_plot.png"
-        if log.get("reward"):
-            plot_metrics(
-                artifact_path / "training_metrics.json",
-                metrics_png,
-                route_label=route_label,
-            )
-            print(f"[artifact] metrics_plot={metrics_png}", flush=True)
-        _postprocess_training_artifacts(log, artifact_path, device_mode, config, route_label)
+    route_label = _artifact_route_label(env)
+    training_log_path = training_log_output_path(f"{run_name}_training_log.json")
+    training_metrics_path = training_log_output_path(f"{run_name}_training_metrics.json")
+    metrics_png = training_log_output_path(f"{run_name}_training_metrics_plot.png").with_suffix(".png")
+    _save_training_log_json(log, training_log_path)
+    _save_training_metrics_json(log, training_metrics_path)
+    if log.get("reward"):
+        plot_metrics(
+            training_metrics_path,
+            metrics_png,
+            route_label=route_label,
+        )
+        print(f"[artifact] metrics_plot={metrics_png}", flush=True)
+    _postprocess_training_artifacts(best_model_path, run_name, device_mode, config, route_label)
     return log, policy_backbone
 
 
@@ -806,7 +811,7 @@ if __name__ == "__main__":
         "--artifact-dir",
         type=str,
         default=None,
-        help="训练产物目录：best.pt/final.pt/training_log.json/training_metrics.json/training_metrics_plot.png/gantt.png（有 best 时）/seq 导出；不传则仍写入 models/tmp.pt 且不跑后处理",
+        help="运行名称（用于 results 下文件名前缀），例如 exp_001",
     )
     args = parser.parse_args()
 
@@ -819,7 +824,7 @@ if __name__ == "__main__":
         cfg.device = "cuda"
     print(f"从 {path} 加载配置", flush=True)
     if args.checkpoint is not None:
-        checkpoint_path = root / "models" / args.checkpoint
+        checkpoint_path = model_output_path(args.checkpoint)
     else:
         checkpoint_path = None
 

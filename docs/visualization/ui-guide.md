@@ -43,7 +43,7 @@
   - 顶层字段: `schema_version`, `device_mode`, `sequence`, `reward_report`, `replay_env_overrides`
   - `sequence` 单步字段: `step`, `time`, `actions`（可兼容 `action`）
   - `replay_env_overrides` 建议包含: `route_code`, `single_route_name`, `single_route_config`（可选）以保证回放构网拓扑与导出时一致
-  - 导出脚本默认 `--out-name tmp`，输出 `seq/tmp.json`；其它名字为 `seq/<out_name>.json`
+  - 导出脚本默认 `--out-name tmp`，输出 `results/action_sequences/tmp.json`；其它名字为 `results/action_sequences/<out_name>.json`
 
 ## Behavior Rules
 1. UI 设备模式与模型设备模式不一致时必须报错并阻止加载。
@@ -53,10 +53,11 @@
 5. 级联 / 单设备 + `--debug`：右侧 **TRANSITIONS** 区按当前网 `id2t_name` 顺序**每两个变迁一行**（左先右后，奇数个时末行右侧留白）；全量列出，用 `enabled` 区分可点/禁用。展示名映射（仅影响按钮文案，不改变 `action_id`）：`t_LLC`→`t_TM2_LLC`，`u_LLC`→`u_LLC_TM3`，`t_LLD`→`t_TM3_LLD`，`u_LLD`→`u_LLD_TM2`；级联下物理名为 `u_LLD*` 的卸载变迁 tooltip 可附 `LLD` 去向列表。
 6. `adapter_factory` 在级联模式下会把窗口当前选择的 `single_route_name` 以 `setdefault` 写入 `env_overrides`，以便与回放 JSON 中的 `replay_env_overrides` 合并时后者仍可覆盖。
 7. 晶圆可视化口径：`LLC/LLD`（`place_type=5`）在 `proc_time>0` 时按加工腔渲染，显示外圈进度与加工完成橙色；其 scrap 判定阈值与 `pn_single` 一致为 `process_time + 3 * P_Residual_time`，超时显示红色。
+8. 手动导出（甘特图/统计/动作）必须强制写入 `results/` 规范目录：`results/gantt`、`results/training_logs`、`results/action_sequences`。
 
 ## Examples
 - 正例:
-  - `python -m visualization.main --device single --model solutions/Continuous_model/saved_models/CT_single_phase2_best.pt`
+  - `python -m visualization.main --device single --model results/models/CT_single_best.pt`
   - 导出序列后，在 UI 中选择 JSON 并用 Model B 回放。
 - 反例:
   - single 序列在 cascade 模式下直接回放。

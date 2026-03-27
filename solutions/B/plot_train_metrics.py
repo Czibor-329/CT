@@ -8,6 +8,7 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import MaxNLocator
+from results.paths import training_log_output_path, safe_name
 
 # 标题中的「路径」等汉字需无衬线中文字体，否则为方框（Windows 常见：微软雅黑 / 黑体）
 _CJK_SANS = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
@@ -124,9 +125,9 @@ def _load_metrics_payload(metrics_json: Path) -> dict:
 
 def _normalize_png_output(out_png: Path) -> Path:
     out_png = Path(out_png)
-    if out_png.suffix == "":
-        return out_png.with_suffix(".png")
-    return out_png
+    filename = out_png.name if out_png.name else "training_metrics_plot.png"
+    normalized = training_log_output_path(safe_name(filename, "training_metrics_plot.png")).with_suffix(".png")
+    return normalized
 
 
 def plot_makespan_comparison(

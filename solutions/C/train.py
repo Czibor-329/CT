@@ -27,6 +27,7 @@ import warnings
 from solutions.PPO.network.models import MaskedPolicyHead
 from solutions.PPO.behavior_clone import pretrain_bc,build_expert_buffer
 from data.ppo_configs.training_config import PPOTrainingConfig
+from results.paths import model_output_path, training_log_output_path
 
 
 
@@ -65,29 +66,23 @@ def train(
     print(config)
     
     # 保存本次训练使用的配置
-    saved_configs_dir = os.path.join("data", "ppo_configs", "training_runs")
-    os.makedirs(saved_configs_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     config_prefix = "config_ppo"
-    config_save_path = os.path.join(saved_configs_dir, f"{config_prefix}_{timestamp}.json")
-    config.save(config_save_path)
+    config_save_path = training_log_output_path(f"{config_prefix}_{timestamp}.json")
+    config.save(str(config_save_path))
     
     torch.manual_seed(config.seed)
     
     # 创建保存目录
-    saved_models_dir = os.path.join(os.path.dirname(__file__), "saved_models")
-    os.makedirs(saved_models_dir, exist_ok=True)
-    
-    # 创建带时间戳的备份文件夹
-    backup_dir = os.path.join(saved_models_dir, timestamp)
-    os.makedirs(backup_dir, exist_ok=True)
+    backup_dir = model_output_path(timestamp).with_suffix("")
+    backup_dir.mkdir(parents=True, exist_ok=True)
     
     # 初始化最佳奖励追踪
     best_reward = float('-inf')
     model_prefix = "CT_ppo"
     print("\n[PPO Training]")
     print("  -> 完整奖励（加工腔室超时 + 运输位超时）")
-    best_model_path = os.path.join(saved_models_dir, f"{model_prefix}_best.pt")
+    best_model_path = model_output_path(f"{model_prefix}_best.pt")
     print(f"  -> Backup folder: {backup_dir}")
 
     # 策略与价值网络
@@ -242,19 +237,19 @@ def train(
                 best_reward = ep_ret
                 torch.save(policy.state_dict(), best_model_path)
                 # 同时备份到时间戳文件夹
-                backup_best_path = os.path.join(backup_dir, f"{model_prefix}_best.pt")
-                torch.save(policy.state_dict(), backup_best_path)
+                backup_best_path = backup_dir / f"{model_prefix}_best.pt"
+                torch.save(policy.state_dict(), str(backup_best_path))
                 print(f"  -> New best model saved! reward={ep_ret:.2f}")
 
     print(f"\nTraining done. Best reward: {best_reward:.2f}")
     
     # 保存最终模型到时间戳备份文件夹
-    final_model_path = os.path.join(backup_dir, f"{model_prefix}_final.pt")
-    torch.save(policy.state_dict(), final_model_path)
+    final_model_path = backup_dir / f"{model_prefix}_final.pt"
+    torch.save(policy.state_dict(), str(final_model_path))
     print(f"Final model saved to: {final_model_path}")
     
     # 保存 latest 模型（覆盖）
-    latest_model_path = os.path.join(saved_models_dir, f"{model_prefix}_latest.pt")
+    latest_model_path = model_output_path(f"{model_prefix}_latest.pt")
     torch.save(policy.state_dict(), latest_model_path)
     print(f"Latest model saved to: {latest_model_path}")
     

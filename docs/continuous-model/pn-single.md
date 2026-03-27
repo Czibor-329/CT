@@ -23,7 +23,7 @@
 2. `ClusterTool` 维护标识、使能判定、时间推进、reward 计算、违规统计。
 3. `Env_PN_Single` 封装 TorchRL 风格 `reset/step`，并暴露固定动作空间下的 `action_mask`。
 4. 训练脚本 `train_single.py` 调用 `collect_rollout_ultra` 执行 CPU rollout + batched PPO update。
-5. 导出脚本 `export_inference_sequence.py` 生成 `seq/<out_name>.json`（默认 `out_name=tmp` 即 `seq/tmp.json`；含 `sequence`、`replay_env_overrides`、`reward_report` 等）。
+5. 导出脚本 `export_inference_sequence.py` 生成 `results/action_sequences/<out_name>.json`（默认 `out_name=tmp` 即 `results/action_sequences/tmp.json`；含 `sequence`、`replay_env_overrides`、`reward_report` 等）。
 
 ## Interfaces
 - 环境接口:
@@ -32,10 +32,10 @@
   - 配置驱动参数（必需构网输入）: `single_route_config`, `single_route_config_path`, `single_route_name`
 - 训练入口:
   - `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1`
-  - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`, `--artifact-dir`（可选：产物目录内 best/final、`training_log.json`、`training_metrics.json`、`training_metrics_plot.png`、`gantt.png`（有 best 时）、`seq/` 导出序列；图标题带 `路径 <路线名>` 后缀）
+  - 关键参数: `--device`, `--compute-device`, `--checkpoint`, `--rollout-n-envs`, `--artifact-dir`（`--artifact-dir` 作为运行名称前缀；产物写入 `results/models`、`results/training_logs`、`results/gantt`、`results/action_sequences`；图标题带 `路径 <路线名>` 后缀）
 - 推理导出入口:
   - `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>`
-  - action sequence 输出为 `seq/<--out-name>.json`（默认 `tmp` → `seq/tmp.json`）
+  - action sequence 输出为 `results/action_sequences/<--out-name>.json`（默认 `tmp` → `results/action_sequences/tmp.json`）
   - 导出的 `replay_env_overrides` 会携带 `single_route_name`，并在可用时携带 `single_route_config`，用于可视化回放时保持与导出一致的构网路线
 - 二次释放惩罚验证入口:
   - `python -m solutions.Continuous_model.check_release_penalty --sequence <json_name> --results-dir results`
@@ -46,13 +46,13 @@
 2. 构网固定走“固定拓扑 + 配置驱动 route 编译链”（`load/build static topology -> parse/normalize -> route IR -> token route -> dynamic marks/token`）；`route_code` 仅用于兼容 alias 选择，不再触发 legacy 手写拓扑分支。
 3. 固定拓扑包含 `LP, PM1-PM10, LLC, LLD, LP_done, TM2, TM3`。
 4. 变迁命名统一为 `u_src_dst` 与 `t_src_dst`；其中 `u_src_dst` 的 `dst` 是 `TM2/TM3`，`t_src_dst` 的 `src` 是 `TM2/TM3`。
-5. 固定拓扑除 `data/cache/topology_vN.npz` 外，另存 `data/cache/transition_id_vN.npz`：`transition_id` 映射 **键** `(TM2 或 TM3, 目标腔室)` → **值** 对应 `t_*` 全名。`get_topology()` 返回的 dict 必含 `transition_id`（与缓存同版本）。
+5. 固定拓扑除 `results/topology_cache/topology_vN.npz` 外，另存 `results/topology_cache/transition_id_vN.npz`：`transition_id` 映射 **键** `(TM2 或 TM3, 目标腔室)` → **值** 对应 `t_*` 全名。`get_topology()` 返回的 dict 必含 `transition_id`（与缓存同版本）。
 6. `compile_route_stages` 相邻 stage 的机械手由 `build_topology.infer_cascade_transport_by_scope` 判定：左、右 stage 的 candidates 须同时落在 `_TM2_SCOPE` 或 `_TM3_SCOPE` 之一；若两套 scope 同时满足则取 **TM3**。
 7. 不再兼容旧命名（`d_TM*`、`t_PM*` 等）；运行时仅消费新命名。
 8. 固定动作空间下，未被当前 route 使用的变迁必须在 `get_action_mask` 中恒为 0。
 9. 当通过 `PetriEnvConfig.load(json)` 加载且 json 中提供 `single_route_config_path` 时，会自动读取该文件并填充 `single_route_config`。
 10. WAIT 掩码规则：存在加工完成待取片晶圆时，仅允许短 WAIT（5s）。
-11. 导出脚本的 `--out-name` 参与文件命名：`seq/<out_name>.json`（非法字符会替换为 `_`）。
+11. 导出脚本的 `--out-name` 参与文件命名：`results/action_sequences/<out_name>.json`（非法字符会替换为 `_`）。
 12. `check_release_penalty.py` 未设置 `--sequence` 时不能执行。
 13. 旧观测分支（place-obs）不再作为当前实现接口。
 14. 配置驱动路径启用时，`construct_single.build_net` 通过 `preprocess_config.py` 先构建“每腔室一块”的预处理真源（包含 stage 覆盖后的 `process_time/cleaning_*`）；`build_marks.py` 仅消费该真源构造 place，返回的 `process_time_map` 只来自该预处理真源并与 `marks` 一致，`ClusterTool._base_proc_time_map` 直接取自该字段。
@@ -76,7 +76,7 @@
   - 假设导出路径为历史 `action_series/<name>_<timestamp>.json`
 
 ## Edge Cases
-- `train_single.py` 最佳模型当前写入 `models/tmp.pt`，并会在 `saved_models/single_<timestamp>/` 保留备份。
+- `train_single.py` 最佳模型当前写入 `results/models/CT_single_best.pt`，并在 `results/models/single_<timestamp>/` 保留备份。
 - `check_release_penalty.py` 的 `--sequence` 参数若传完整路径，会被额外拼接到 `seq/`，建议只传文件名。
 
 ## Related Docs

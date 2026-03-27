@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from results.paths import action_sequence_path, gantt_output_path, model_output_path
 
 # Add project root to path
 ROOT = Path(__file__).resolve().parents[2]
@@ -69,9 +70,7 @@ def main():
     # Path to the best model in the planB_route_c directory
 
 
-    ROOT = Path(__file__).resolve().parents[1]
-
-    model_path = os.path.join(ROOT, "PPO", "saved_models", "planB_route_c", "CT_phase2_best.pt")
+    model_path = model_output_path("CT_ppo_best.pt")
     
     if not os.path.exists(model_path):
         print(f"Error: Model not found at {model_path}")
@@ -103,9 +102,7 @@ def main():
     parser = TDPNParser()
     sequence = parser.parse(events)
     
-    # Save to the same directory as this script
-    output_dir = Path(__file__).parent
-    output_file = output_dir / "planB_sequence.json"
+    output_file = action_sequence_path("planB_sequence")
 
     
     with open(output_file, "w") as f:
@@ -113,8 +110,7 @@ def main():
         
     print(f"Generated {output_file} with {len(sequence)} steps.")
 
-    out_path = r"/solutions/C\\"
-    env.net.render_gantt(out_path=out_path,policy=3)
+    env.net.render_gantt(out_path=str(gantt_output_path("planB_gantt.png")), policy=3)
 
 if __name__ == "__main__":
     main()

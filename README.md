@@ -9,12 +9,24 @@
 | 级联单设备训练 | `python -m solutions.Continuous_model.train_single --device cascade --rollout-n-envs 1` | 训练配置：`data/ppo_configs/s_train.json`；可选 `--compute-device`（`cpu` 或 `cuda`）、`--checkpoint` |
 | 强制 CPU 更新 | `python -m solutions.Continuous_model.train_single --device cascade --compute-device cpu` | 环境步进在 CPU 上，rollout 后再送入计算设备（见 `env_single` 说明） |
 | 并发双机械手训练 | `python -m solutions.Continuous_model.train_concurrent --config data/ppo_configs/concurrent_phase2_config.json` | 跨机器时若默认 config 为绝对路径，请改为显式相对路径（见 `docs/training/training-guide.md`） |
-| 导出推理序列 | `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>` | 默认写入 `seq/tmp.json`，含 `replay_env_overrides` |
-| 可视化界面 | `python -m visualization.main --device cascade --model <model_path>` | 未传 `--model` 时若存在 `solutions/Continuous_model/saved_models/CT_single_phase2_best.pt` 会自动加载；`--no-model` 仅手动或 JSON 回放；`--quiet` 关闭逐步打印；`--debug` 显示变迁调试按钮 |
+| 导出推理序列 | `python -m solutions.Continuous_model.export_inference_sequence --device cascade --model <model_path>` | 默认写入 `results/action_sequences/tmp.json`，含 `replay_env_overrides` |
+| 可视化界面 | `python -m visualization.main --device cascade --model <model_path>` | 未传 `--model` 时进入手动模式；`--no-model` 仅手动或 JSON 回放；`--quiet` 关闭逐步打印；`--debug` 显示变迁调试按钮 |
 
 **说明**：`train_single` 的 CLI 默认 `--device` 为 `single`，但当前 `Env_PN_Single` 仅支持 **cascade**；请使用 `--device cascade`，与 `docs/training/training-guide.md` 一致，行为见 `docs/continuous-model/pn-single.md`。
 
 **DocRef**：`docs/training/training-guide.md`、`docs/visualization/ui-guide.md`、`docs/overview/project-context.md`。
+
+## 输出路径规范（强制）
+
+以下规则为仓库强制规范，后续新增/修改输出逻辑必须遵守：
+
+1. 所有可重复生成的运行产物必须写入 `results/`。
+2. 动作序列只写 `results/action_sequences/`。
+3. 甘特图只写 `results/gantt/`。
+4. 训练日志与训练指标只写 `results/training_logs/`。
+5. 网拓扑缓存只写 `results/topology_cache/`。
+6. 模型权重只写 `results/models/`。
+7. 禁止新增写入 `seq/`、`saved_models/`、`data/cache/` 等旧路径。
 
 ## 架构（概览）
 

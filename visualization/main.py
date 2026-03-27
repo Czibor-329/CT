@@ -21,6 +21,7 @@ from solutions.A.rl_env import Env_PN_Single
 from .petri_single_adapter import PetriSingleAdapter
 from .viewmodel import PetriViewModel
 from .main_window import PetriMainWindow
+from results.paths import model_output_path
 
 
 def set_app_icon(app: QApplication) -> QIcon | None:
@@ -398,7 +399,7 @@ def main() -> int:
             model_path = args.model
         else:
             # 默认模型路径
-            default_model = Path("solutions/Continuous_model/saved_models/CT_single_phase2_best.pt")
+            default_model = model_output_path("CT_single_best.pt")
             if default_model.exists():
                 model_path = str(default_model)
                 print(f"使用默认模型: {model_path}")

@@ -1787,7 +1787,7 @@ class ClusterTool:
 
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        final_path = out.parent / "gantt.png"
+        final_path = out if out.suffix.lower() == ".png" else out.with_suffix(".png")
         base_path = out.with_suffix("")
 
         n_jobs = max(1, len(jobs))

@@ -2,7 +2,7 @@
 单设备/级联推理序列导出工具。
 
 在 `Env_PN_Single` 上 roll out 策略，将 `sequence`、`replay_env_overrides`、`reward_report`
-等写入仓库根目录 `seq/<out_name>.json`（默认文件名见 CLI `--out-name`）。
+等写入仓库根目录 `results/action_sequences/<out_name>.json`（默认文件名见 CLI `--out-name`）。
 
 `rollout_and_export(..., gantt_png_path=..., gantt_title_suffix=...)` 可在导出 JSON 后
 对本次 rollout 的 `env.net` 调用 `render_gantt` 写出 `gantt.png`（与 `pn_single.render_gantt` 行为一致）。
@@ -24,6 +24,7 @@ from torchrl.modules import MaskedCategorical, ProbabilisticActor
 
 from solutions.model.network import MaskedPolicyHead
 from solutions.A.rl_env import Env_PN_Single
+from results.paths import action_sequence_path, model_output_path, safe_name
 
 
 def _to_step_state(td_next: Any) -> Any:
@@ -348,10 +349,8 @@ def rollout_and_export(
     else:
         raise ValueError(f"不支持的 device_mode: {device_mode}")
 
-    action_series_dir = Path(__file__).resolve().parents[2] / "seq"
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(out_name).strip()) or "export"
-    action_series_path = action_series_dir / f"{safe_name}.json"
-    action_series_dir.mkdir(parents=True, exist_ok=True)
+    safe_out_name = safe_name(str(out_name), "export")
+    action_series_path = action_sequence_path(safe_out_name)
 
     with action_series_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -363,7 +362,7 @@ def rollout_and_export(
 
 
 def main() -> None:
-    default_model = Path(__file__).resolve().parent / "saved_models" / "CT_concurrent_phase2_best.pt"
+    default_model = model_output_path("CT_single_best.pt")
     parser = argparse.ArgumentParser(description="导出推理动作序列（级联/单设备）")
     parser.add_argument("--model", type=Path, default=default_model, help="模型权重路径")
     parser.add_argument("--max-steps", type=int, default=500, help="最大推理步数")
@@ -372,7 +371,7 @@ def main() -> None:
         "--out-name",
         type=str,
         default="tmp",
-        help="seq 目录下 JSON 文件名（不含 .json）；默认 tmp 以兼容旧文档中的 seq/tmp.json",
+        help="results/action_sequences 下 JSON 文件名（不含 .json）",
     )
     parser.add_argument(
         "--device",
@@ -404,13 +403,12 @@ def main() -> None:
     selected_device = args.device
     if out_name == "concurrent_infer_seq" and selected_device == "single":
         out_name = "single_infer_seq"
-    root = Path(__file__).resolve().parents[2]
     raw_model = args.model
     cand = Path(raw_model)
     if cand.is_file():
         model_path = cand.resolve()
     else:
-        model_path = (root / "models" / raw_model).resolve()
+        model_path = model_output_path(str(raw_model)).resolve()
     out = rollout_and_export(
         model_path=model_path,
         max_steps=args.max_steps,

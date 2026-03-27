@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import json
 from math import ceil
 from collections import defaultdict
@@ -30,6 +29,7 @@ from solutions.B.clustertool_config import ClusterToolCfg
 from solutions.B.training_config import TrainingConfig
 from solutions.B.Env import Env
 from solutions.B.ppo_models import MaskedPolicyHead
+from results.paths import model_output_path, training_log_output_path
 
 
 def build_policy_actor(
@@ -112,7 +112,7 @@ def collect_rollout(
 
 
 def _training_metrics_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "results" / "training_metrics.json"
+    return training_log_output_path("b_training_metrics.json")
 
 
 def train(
@@ -131,14 +131,11 @@ def train(
         clustertool_cfg=cluster_tool_cfg,
     )
 
-    project_root = os.path.dirname(os.path.dirname(__file__))
-    saved_models_dir = os.path.join(project_root, "saved_models")
-    os.makedirs(saved_models_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = os.path.join(saved_models_dir, f"pdr_{timestamp}")
-    os.makedirs(backup_dir, exist_ok=True)
-    best_model_path = os.path.join(saved_models_dir, "CT_pdr_best.pt")
-    latest_model_path = os.path.join(saved_models_dir, "CT_pdr_latest.pt")
+    backup_dir = model_output_path(f"pdr_{timestamp}").with_suffix("")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    best_model_path = model_output_path("CT_pdr_best.pt")
+    latest_model_path = model_output_path("CT_pdr_latest.pt")
 
     obs_dim = int(env.observation_spec["observation_f"].shape[-1])
     n_actions = int(env.action_spec.space.n)
@@ -246,11 +243,11 @@ def train(
             if batch_reward > best_reward and finish_count > 0:
                 best_reward = batch_reward
                 torch.save(policy.state_dict(), best_model_path)
-                torch.save(policy.state_dict(), os.path.join(backup_dir, "CT_pdr_best.pt"))
+                torch.save(policy.state_dict(), str(backup_dir / "CT_pdr_best.pt"))
                 print(f"  -> New best model saved! reward={batch_reward:.2f}", flush=True)
 
     env.close()
-    torch.save(policy.state_dict(), os.path.join(backup_dir, "CT_pdr_final.pt"))
+    torch.save(policy.state_dict(), str(backup_dir / "CT_pdr_final.pt"))
     torch.save(policy.state_dict(), latest_model_path)
     metrics_path = _training_metrics_path()
     metrics_path.parent.mkdir(parents=True, exist_ok=True)

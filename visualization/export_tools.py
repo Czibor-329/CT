@@ -8,10 +8,12 @@ import csv
 import json
 from pathlib import Path
 from typing import Dict, Any, List
+from datetime import datetime
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMessageBox
 
 from .viewmodel import PetriViewModel
+from results.paths import action_sequence_path, gantt_output_path, training_log_output_path
 
 
 class ExportTools(QWidget):
@@ -37,19 +39,17 @@ class ExportTools(QWidget):
         root.addWidget(self.btn_actions)
 
     def export_gantt(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "保存甘特图", "gantt.png", "PNG Files (*.png)")
-        if not path:
-            return
-        ok = self.viewmodel.adapter.render_gantt(path)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = gantt_output_path(f"ui_gantt_{ts}.png")
+        ok = self.viewmodel.adapter.render_gantt(str(path))
         if ok:
             QMessageBox.information(self, "导出成功", f"已保存: {path}")
         else:
             QMessageBox.warning(self, "导出失败", "甘特图导出失败")
 
     def export_stats(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "保存统计数据", "stats.csv", "CSV Files (*.csv)")
-        if not path:
-            return
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = training_log_output_path(f"ui_stats_{ts}.csv")
         stats = self._build_stats()
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -59,9 +59,8 @@ class ExportTools(QWidget):
         QMessageBox.information(self, "导出成功", f"已保存: {path}")
 
     def export_actions(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "保存动作序列", "actions.json", "JSON Files (*.json)")
-        if not path:
-            return
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = action_sequence_path(f"ui_actions_{ts}")
         actions = self.viewmodel.adapter.export_action_sequence()
         Path(path).write_text(json.dumps(actions, indent=2, ensure_ascii=False), encoding="utf-8")
         QMessageBox.information(self, "导出成功", f"已保存: {path}")

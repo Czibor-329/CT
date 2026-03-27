@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from results.paths import action_sequence_path, safe_name
 
 
 def _normalize_transition_name(action_name: str) -> str:
@@ -78,10 +79,7 @@ def export_single_replay_payload(
     out_name: str = "pdr_sequence",
 ) -> Path:
     payload = build_single_replay_payload(full_transition_records)
-    seq_dir = Path(__file__).resolve().parents[2] / "seq"
-    seq_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(out_name).strip()) or "pdr_sequence"
-    out_path = seq_dir / f"{safe_name}.json"
+    out_path = action_sequence_path(safe_name(str(out_name), "pdr_sequence"))
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return out_path
@@ -98,7 +96,7 @@ def _load_records_from_json(records_json_path: Path) -> list[dict[str, Any]]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="将 PDR full_transition_records 转为 UI 可回放序列")
     parser.add_argument("--records-json", type=Path, required=True, help="输入 records JSON 文件路径")
-    parser.add_argument("--out-name", type=str, default="pdr_sequence", help="输出到 seq/<out_name>.json")
+    parser.add_argument("--out-name", type=str, default="pdr_sequence", help="输出到 results/action_sequences/<out_name>.json")
     args = parser.parse_args()
 
     records = _load_records_from_json(args.records_json)

@@ -155,7 +155,7 @@ def parse_args():
   python run_ppo_tdpn.py --config data/ppo_configs/tdpn_config.json
 
   # 从checkpoint继续训练
-  python run_ppo_tdpn.py --checkpoint saved_models/CT_tdpn_best.pt
+  python run_ppo_tdpn.py --checkpoint results/models/CT_tdpn_best.pt
 
   # 指定随机种子
   python run_ppo_tdpn.py --seed 42

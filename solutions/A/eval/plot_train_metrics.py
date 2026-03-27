@@ -6,6 +6,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from results.paths import training_log_output_path, safe_name
 
 # 标题中的「路径」等汉字需无衬线中文字体，否则为方框（Windows 常见：微软雅黑 / 黑体）
 _CJK_SANS = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "PingFang SC", "Arial Unicode MS", "DejaVu Sans"]
@@ -98,7 +99,9 @@ def plot_metrics(
     ax2.grid(True, axis="y", alpha=0.3)
 
     plt.tight_layout()
-    out_png = Path(out_png)
+    out_png = training_log_output_path(
+        safe_name(Path(out_png).name, "training_metrics_plot.png")
+    ).with_suffix(".png")
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(str(out_png), dpi=300, bbox_inches="tight")
     if show:
